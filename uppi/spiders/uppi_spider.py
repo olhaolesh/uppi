@@ -13,6 +13,7 @@ AE_PASSWORD = config("AE_PASSWORD")
 AE_PIN = config("AE_PIN")
 
 class UppiSelectors:
+    """Selectors for the UppiSpider."""
     # Login form selectors
     FISCOLINE_TAB = 'ul > li > a[href="#tab-4"]'
     USERNAME_FIELD = '#username-fo-ent'
@@ -27,8 +28,9 @@ class UppiSpider(scrapy.Spider):
     allowed_domains = ["agenziaentrate.gov.it"]
 
     async def start(self):
+        """Start the spider by checking for existing session state."""
         if os.path.exists("state.json"):
-            self.logger.info(f"✅ Знайдено state.json! Використовуємо збережену сесію. URL: {AE_URL_HOME}")
+            self.logger.info(f"✅ Found state.json! We are using a saved session. Go to URL: {AE_URL_HOME}")
             yield scrapy.Request(
                 url=AE_URL_HOME,
                 callback=self.parse_ae_data,
@@ -40,7 +42,7 @@ class UppiSpider(scrapy.Spider):
                 errback=self.errback_close_page,
             )
         else:
-            self.logger.info("🔄 Виконуємо авторизацію...")
+            self.logger.info("🔄 Performing authorization....")
             yield scrapy.Request(
                 url=AE_LOGIN_URL,
                 callback=self.login,
@@ -54,11 +56,12 @@ class UppiSpider(scrapy.Spider):
 
     @staticmethod
     async def log_request(route, request):
-        print(f"📡 Запит: {request.url} | Метод: {request.method}")
+        """Log all requests made by the page."""
+        print(f"📡 Request: {request.url} | Method: {request.method}")
         await route.continue_()
 
     async def login(self, response):
-        """Autologin to agenziaentrate.gov.it"""
+        """Login to AE website and save state.json"""
         page = response.meta["playwright_page"]
 
         await page.route("**", self.log_request)
@@ -76,11 +79,11 @@ class UppiSpider(scrapy.Spider):
 
         try:
             await page.wait_for_selector(UppiSelectors.PROFILE_INFO, timeout=10_000)
-            self.logger.info("✅ Логін успішний! Зберігаємо state.json.")
+            self.logger.info("✅ Login successful! Saving state.json")
             await page.wait_for_timeout(2_000)
             await page.context.storage_state(path="state.json")
         except PlaywrightTimeoutError as err:
-            self.logger.error(f"❌ Помилка логіну! {err} Видаляємо state.json.")
+            self.logger.error(f"❌ Login error! {err} Deleting state.json")
             if os.path.exists("state.json"):
                 os.remove("state.json")
         finally:
@@ -97,23 +100,23 @@ class UppiSpider(scrapy.Spider):
         )
 
     async def parse_ae_data(self, response):
+        """Parse AE data after ensuring authorization is active."""
         page = response.meta["playwright_page"]
         if not page:
-            self.logger.error("❌ Не отримано Playwright page. Завантажуємо без нього.")
+            self.logger.error("❌ Playwright page not received. Loading without it")
             return
         try:
-            await page.wait_for_timeout(12_000)
             await page.wait_for_selector(UppiSelectors.PROFILE_INFO, timeout=5000)
-            self.logger.info("✅ Авторизація активна.")
+            self.logger.info("✅ Authorization is active")
         except PlaywrightTimeoutError:
-            self.logger.warning("❌ Авторизація не знайдена. Видаляємо state.json.")
+            self.logger.warning("❌ Authorization not found. Deleting state.json")
             os.remove("state.json")
 
     async def errback_close_page(self, failure):
-        ''''''
+        """Errback to close Playwright page on error."""
         page: Page = failure.request.meta.get("playwright_page")
         if page:
             await page.close()
-            self.logger.warning("❌ Сторінка Playwright закрита через помилку.")
+            self.logger.warning("❌ Playwright page closed due to error")
         else:
-            self.logger.error("🚨 Помилка: не вдалося отримати `playwright_page` у `errback`.")
+            self.logger.error("🚨 Error: Could not get `playwright_page` in `errback`")
