@@ -18,3 +18,5 @@ Thumbs.db
 
 # Innore playwright auth state
 state.json
+# Ignore downloads 
+/downloads

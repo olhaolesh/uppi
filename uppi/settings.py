@@ -21,6 +21,7 @@ PLAYWRIGHT_LAUNCH_OPTIONS = {
         "--disable-gpu",
         "--no-sandbox",
         "--disable-dev-shm-usage",
+        "--disable-extensions",
     ],
 }
 PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30_000
@@ -31,14 +32,16 @@ PLAYWRIGHT_CONTEXTS = {
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "java_script_enabled": True,
         "ignore_https_errors": True,
+        "locale": 'it-IT',  # Італійська локаль
+        "timezone_id": 'Europe/Rome',  # Італійский часовой пояс
         # "proxy": {
         #     "server": "http://myproxy.com:3128",
         #     "username": "user",
         #     "password": "pass",
         # },
         "extra_http_headers": {
-            "Accept-Language": "en-US,en;q=0.9,q=0.8",
-            "Referer": "https://www.agenziaentrate.gov.it/",
+            'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+            "Connection": "keep-alive",
         },
         # "storage_state": "state.json",
     }
@@ -53,7 +56,7 @@ DOWNLOAD_HANDLERS = {
 }
 
 # Obey robots.txt rules
-ROBOTSTXT_OBEY = True
+ROBOTSTXT_OBEY = False
 
 
 # Set settings whose default value is deprecated to a future-proof value
