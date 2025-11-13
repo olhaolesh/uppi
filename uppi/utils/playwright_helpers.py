@@ -19,3 +19,4 @@ async def get_webgl_vendor(page: Page):
             return dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) + '|' + gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null;
         } catch(e) { return null; }
     }""")
+

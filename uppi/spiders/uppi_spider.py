@@ -8,13 +8,20 @@ from uppi.utils.selectors import UppiSelectors
 from uppi.utils.captcha_solver import solve_captcha
 from uppi.utils.playwright_helpers import apply_stealth, log_requests, get_webgl_vendor
 
+UFFICIO_PROVINCIALE_LABEL = config("UFFICIO_PROVINCIALE_LABEL", default="PESCARA Territorio")
+TIPO_CATASTO = config("TIPO_CATASTO", default="F") # "F" for Fabbricati, "T" for Terreni, "E" for Terreni e Fabbricati
+COMUNE = config("COMUNE", default="PESCARA")
+CODICE_FISCALE = config("CODICE_FISCALE")
+
 AE_LOGIN_URL = config("AE_LOGIN_URL")
 AE_URL_SERVIZI = config("AE_URL_SERVIZI")
+SISTER_VISURE_CATASTALI_URL = config("SISTER_VISURE_CATASTALI_URL")
+SISTER_LOGOUT_URL = config("SISTER_LOGOUT_URL")
+
 TWO_CAPTCHA_API_KEY = config("TWO_CAPTCHA_API_KEY")
 AE_USERNAME = config("AE_USERNAME")
 AE_PASSWORD = config("AE_PASSWORD")
 AE_PIN = config("AE_PIN")
-CODICE_FISCALE = config("CODICE_FISCALE")
 
 
 class UppiSpider(scrapy.Spider):
@@ -90,7 +97,7 @@ class UppiSpider(scrapy.Spider):
             self.logger.exception("[LOGIN] Unexpected error during login: %s", e)
         finally:
             try:
-                await page.close()
+                await self.safe_close_page(page, "login")
                 self.logger.debug("[LOGIN] Playwright page closed")
             except Exception:
                 # closing page might fail if page already closed; ignore
@@ -99,7 +106,7 @@ class UppiSpider(scrapy.Spider):
         # Continue to service parsing
         yield scrapy.Request(
             url=AE_URL_SERVIZI,
-            callback=self.parse_ae_data,
+            callback=self.preparare_sister_service,
             meta={
                 "playwright": True,
                 "playwright_context": "default",
@@ -108,7 +115,7 @@ class UppiSpider(scrapy.Spider):
             errback=self.errback_close_page,
         )
 
-    async def parse_ae_data(self, response):
+    async def preparare_sister_service(self, response):
         """
         High-level coordinator after login.
         Splits work into smaller methods:
@@ -122,6 +129,7 @@ class UppiSpider(scrapy.Spider):
             self.logger.error("[PARSE] No Playwright page provided")
             return
 
+        # Pre-navigation setup - stealth, logging, WebGL info
         try:
             await apply_stealth(page, STEALTH_SCRIPT)
             await page.route("**", log_requests)
@@ -137,11 +145,11 @@ class UppiSpider(scrapy.Spider):
             return
 
         # Perform navigation and selections inside sister
-        navigated = await self._navigate_sister_options(sister_page)
+        navigated = await self._navigate_to_visure_catastali(sister_page)
         if not navigated:
             self.logger.error("[PARSE] Navigation inside SISTER failed. Attempting cleanup.")
             try:
-                await sister_page.close()
+                await self._logout_in_context(page.context, via_ui=True)
             except Exception:
                 pass
             # remove incomplete state
@@ -159,14 +167,9 @@ class UppiSpider(scrapy.Spider):
         # Download document
         await self._download_document(sister_page)
 
-        # optionally pause for debugging (left as in original)
-        try:
-            await sister_page.pause()
-        except Exception:
-            # pause can throw if not supported; ignore
-            pass
-
-        self.logger.info("[PARSE] Finished parse_ae_data")
+        # Final logout and cleanup
+        await self._logout_in_context(sister_page.context, via_ui=True)
+        self.logger.info("[PARSE] Finished preparare_sister_service")
 
     async def _open_sister_service(self, page: Page) -> Optional[Page]:
         """Open SISTER in a new page/tab and save state.json. Returns sister_page or None."""
@@ -179,11 +182,11 @@ class UppiSpider(scrapy.Spider):
             # open new page via middle click and capture it
             try:
                 async with page.context.expect_page() as ctx:
-                    await page.click('a[href*="ret2sister"]', button="middle")
+                    await page.click(UppiSelectors.VAI_AL_SERVIZIO_BUTTON, button="middle")
                 new_page_ctx = ctx
                 sister_page = await new_page_ctx.value
                 await sister_page.bring_to_front()
-                await page.close()  # close main AE page
+                await self.safe_close_page(page, "AE page")  # close main AE page
                 self.logger.info("[OPEN_SISTER] SISTER page opened and AE main closed")
             except PlaywrightTimeoutError as e:
                 self.logger.warning("[OPEN_SISTER] Opening SISTER timed out: %s", e)
@@ -209,61 +212,75 @@ class UppiSpider(scrapy.Spider):
                 self.logger.warning("[OPEN_SISTER] Failed to save state.json: %s", e)
         except PlaywrightTimeoutError as e:
             self.logger.warning("[OPEN_SISTER] Conferma button not found: %s", e)
+            await self._logout_in_context(page.context, via_ui=True)
+
             # still return sister_page; maybe flow continues with different UI
         except Exception as e:
             self.logger.exception("[OPEN_SISTER] Error after opening SISTER: %s", e)
 
         return sister_page
 
-    async def _navigate_sister_options(self, sister_page: Page) -> bool:
+    async def _navigate_to_visure_catastali(self, sister_page: Page) -> bool:
         """
         Make the series of clicks/selects inside SISTER to reach property list.
         Returns True on success, False on failure.
         """
         try:
-            await sister_page.click(UppiSelectors.CONSULTAZIONI_CERTIFACAZIONI)
-            await sister_page.wait_for_timeout(1_000)
-            await sister_page.click(UppiSelectors.VISURE_CATASTALI)
-            await sister_page.wait_for_timeout(1_000)
-            await sister_page.click(UppiSelectors.CONFERMA_LETTURA)
-            await sister_page.wait_for_timeout(1_000)
-
+            # await sister_page.click(UppiSelectors.CONSULTAZIONI_CERTIFACAZIONI)
+            # await sister_page.wait_for_selector(UppiSelectors.VISURE_CATASTALI, timeout=10_000)
+            # await sister_page.wait_for_timeout(1_000)
+            # await sister_page.click(UppiSelectors.VISURE_CATASTALI)
+            # await sister_page.wait_for_timeout(1_000)
+            await sister_page.goto(SISTER_VISURE_CATASTALI_URL)
+            # Handle possible "Conferma Lettura"
+            try:
+                await sister_page.wait_for_selector(UppiSelectors.CONFERMA_LETTURA, timeout=3_000)
+                await sister_page.click(UppiSelectors.CONFERMA_LETTURA)
+            except PlaywrightTimeoutError:
+                self.logger.info("[NAVIGATE TO VISURE CATASTALI] Conferma Lettura not found, possibly already accepted")
+            # Select ufficio
             select_ufficio = sister_page.locator(UppiSelectors.SELECT_UFFICIO)
             await select_ufficio.wait_for()
-            await select_ufficio.select_option(value="PESCARA Territorio-PE")
-            await sister_page.click(UppiSelectors.APLICA_BUTTON)
             await sister_page.wait_for_timeout(1_000)
+            await select_ufficio.select_option(label=UFFICIO_PROVINCIALE_LABEL)
+            await sister_page.click(UppiSelectors.APLICA_BUTTON)
 
             select_catasto = sister_page.locator(UppiSelectors.SELECT_CATASTO)
             await select_catasto.wait_for()
-            await select_catasto.select_option(value="F")
             await sister_page.wait_for_timeout(1_000)
+            await select_catasto.select_option(value=TIPO_CATASTO)
 
             select_comune = sister_page.locator(UppiSelectors.SELECT_COMUNE)
             await select_comune.wait_for()
-            await select_comune.select_option(value="G482#PESCARA#0#0")
             await sister_page.wait_for_timeout(1_000)
+            await select_comune.select_option(label=COMUNE)
 
             await sister_page.click(UppiSelectors.CODICE_FISCALE_RADIO)
             await sister_page.fill(UppiSelectors.CODICE_FISCALE_FIELD, CODICE_FISCALE)
             await sister_page.click(UppiSelectors.RICERCA_BUTTON)
-            await sister_page.wait_for_timeout(1_000)
 
             # handle omonimi list and select first property
             await sister_page.wait_for_selector(UppiSelectors.SELECT_OMONIMI, timeout=10_000)
-            await sister_page.click(UppiSelectors.SELECT_OMONIMI)
-            await sister_page.click(UppiSelectors.IMOBILI_BUTTON)
             await sister_page.wait_for_timeout(1_000)
-            await sister_page.wait_for_selector(UppiSelectors.ELENCO_IMOBILE, timeout=10_000)
-            await sister_page.click(UppiSelectors.ELENCO_IMOBILE)
-            await sister_page.click(UppiSelectors.VISURA_PER_IMOBILE_BUTTON)
-            self.logger.info("[NAVIGATE] Completed navigation to property view")
+            await sister_page.click(UppiSelectors.SELECT_OMONIMI)
+
+            # If you want to select property by Elenco immobili per diritti e quote instead Visura per soggetto, uncomment below and comment the visura per soggetto line
+            # await sister_page.click(UppiSelectors.IMOBILI_BUTTON)
+            # await sister_page.wait_for_selector(UppiSelectors.SELECT_IMOBILE, timeout=10_000)
+            # await sister_page.wait_for_timeout(1_000)
+            # await sister_page.click(UppiSelectors.SELECT_IMOBILE)
+            # await sister_page.click(UppiSelectors.VISURA_PER_IMOBILE_BUTTON)
+
+            # Proceed to visura per soggetto
+            await sister_page.click(UppiSelectors.VISURA_PER_SOGGECTO_BUTTON)
+
+            self.logger.info("[NAVIGATE TO VISURE CATASTALI] Completed navigation to property view")
             return True
         except PlaywrightTimeoutError as e:
-            self.logger.warning("[NAVIGATE] Timeout during navigation: %s", e)
+            self.logger.warning("[NAVIGATE TO VISURE CATASTALI] Timeout during navigation: %s", e)
             return False
         except Exception as e:
-            self.logger.exception("[NAVIGATE] Unexpected error during navigation: %s", e)
+            self.logger.exception("[NAVIGATE TO VISURE CATASTALI] Unexpected error during navigation: %s", e)
             return False
 
     async def _solve_captcha_if_present(self, sister_page: Page):
@@ -272,6 +289,13 @@ class UppiSpider(scrapy.Spider):
             await sister_page.wait_for_selector(UppiSelectors.IMG_CAPTCHA, timeout=5_000)
         except PlaywrightTimeoutError:
             self.logger.info("[CAPTCHA] No CAPTCHA detected")
+            await sister_page.click(UppiSelectors.INOLTRA_BUTTON)
+            inoltra_button = sister_page.locator(UppiSelectors.INOLTRA_BUTTON)
+            try:
+                await inoltra_button.wait_for(state="hidden", timeout=10_000)
+            except PlaywrightTimeoutError:
+                # If it does not hide, still proceed and log
+                self.logger.warning("[CAPTCHA] Inoltra button did not hide after submission")
             return
 
         # if we reach here, CAPTCHA element exists
@@ -299,7 +323,7 @@ class UppiSpider(scrapy.Spider):
 
     async def _download_document(self, sister_page: Page):
         """Trigger document download and save file to downloads/ folder."""
-        downloads_dir = os.path.join(os.getcwd(), "downloads")
+        downloads_dir = os.path.join(os.getcwd(), f"downloads/{CODICE_FISCALE}")
         os.makedirs(downloads_dir, exist_ok=True)
 
         download_ctx = None
@@ -308,7 +332,7 @@ class UppiSpider(scrapy.Spider):
         try:
             # attempt to expect a download and click the 'Apri' button
             async with sister_page.expect_download() as download_ctx:
-                await sister_page.wait_for_selector(UppiSelectors.APRI_BUTTON)
+                await sister_page.wait_for_selector(UppiSelectors.APRI_BUTTON, timeout=60_000)
                 await sister_page.click(UppiSelectors.APRI_BUTTON)
                 self.logger.info("[DOWNLOAD] Clicked Apri, waiting for download to appear")
             # retrieve download object
@@ -330,20 +354,131 @@ class UppiSpider(scrapy.Spider):
         except Exception as e:
             self.logger.exception("[DOWNLOAD] Failed to save download: %s", e)
 
+    async def safe_close_page(self, page: Optional[Page], label: str = ""):
+        """Safely close a Playwright page with logging."""
+        if not page:
+            return
+        try:
+            await page.close()
+            self.logger.debug(f"[CLOSE] Page closed {label}")
+        except Exception as e:
+            self.logger.warning(f"[CLOSE] Failed to close page {label}: {e}")
+
+    async def _logout_in_context(self, context, via_ui: bool = True, close_context: bool = False):
+        """
+        Universal logout within the given context.
+        - via_ui=True: try clicking the 'Esci' button (if present), otherwise fallback -> goto endpoint.
+        - close_context=True: closes the context at the end.
+        Returns True if a logout attempt was made (at least some).
+        """
+        page = None
+        created_temp = False
+        try:
+            pages = context.pages
+
+            # If the context is empty, create a temporary page and simply go to the endpoint
+            if not pages:
+                created_temp = True
+                self.logger.warning("[LOGOUT] No open pages in context, creating temporary one for endpoint logout")
+                page = await context.new_page()
+                try:
+                    await page.goto(SISTER_LOGOUT_URL)
+                    await page.wait_for_selector(UppiSelectors.LOGOUT_BUTTON, timeout=8_000)
+                    self.logger.info("[LOGOUT] Navigated to logout endpoint")
+                    await page.wait_for_timeout(600)
+                except Exception as e:
+                    self.logger.debug(f"[LOGOUT] goto logout endpoint failed or timed out: {e}")
+                return True
+
+            # If the page exists, use the last one
+            page = pages[-1]
+            ui_success = False
+
+            # --- 1) Try via UI if allowed ---
+            if via_ui:
+                try:
+                    await page.wait_for_selector(UppiSelectors.ESCI_SISTER_BUTTON, timeout=5_000)
+                    await page.click(UppiSelectors.ESCI_SISTER_BUTTON)
+                    self.logger.info("[LOGOUT] Clicked Esci button (UI)")
+                    await page.wait_for_timeout(1_000)
+                    ui_success = True
+                except PlaywrightTimeoutError:
+                    self.logger.debug("[LOGOUT] Esci button not found, falling back to endpoint")
+                except Exception as e:
+                    self.logger.debug(f"[LOGOUT] Esci click failed ({type(e).__name__}): {e}")
+
+            # --- 2) If the UI didn't work, try the endpoint ---
+            if not ui_success:
+                try:
+                    await page.goto(SISTER_LOGOUT_URL)
+                    await page.wait_for_selector(UppiSelectors.LOGOUT_BUTTON, timeout=8_000)
+                    self.logger.info("[LOGOUT] Navigated to logout endpoint (fallback)")
+                    await page.wait_for_timeout(600)
+                except Exception as e:
+                    self.logger.debug(f"[LOGOUT] goto logout endpoint failed or timed out: {e}")
+
+            return True
+
+        except Exception as e:
+            self.logger.exception("[LOGOUT] Unexpected error in logout helper: %s", e)
+            return False
+        finally:
+            # Close the temporary page if created one
+            if created_temp and page:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+
+            # Close the context if requested.
+            if close_context:
+                try:
+                    await context.close()
+                    self.logger.info("[LOGOUT] Context closed")
+                except Exception as e:
+                    self.logger.warning(f"[LOGOUT] Failed to close context: {e}")
+
     async def errback_close_page(self, failure):
-        """Errback: ensure Playwright page is closed on request failure."""
+        """Errback: ensure Playwright page/context is cleaned and closed on request failure."""
         page: Optional[Page] = None
         try:
             page = failure.request.meta.get("playwright_page")
         except Exception:
-            # if failure.request does not exist or meta missing
             pass
 
         if page:
             try:
-                await page.close()
-                self.logger.warning("[ERRBACK] Playwright page closed due to error")
+                # We are trying to make UI logout, but if button is missing - helper will fall back to endpoint
+                await self._logout_in_context(page.context, via_ui=True, close_context=False)
             except Exception as e:
-                self.logger.warning("[ERRBACK] Failed to close page: %s", e)
-        else:
-            self.logger.error("[ERRBACK] No playwright_page found in failure request meta")
+                self.logger.warning("[ERRBACK] logout via page.context failed: %s", e)
+            finally:
+                await self.safe_close_page(page, "errback")
+                return
+
+        # Якщо page немає — плануємо окремий Request щоб відкрити новий playwright page і виконати logout там
+        try:
+            logout_full_url = SISTER_LOGOUT_URL
+            req = scrapy.Request(
+                url=logout_full_url,
+                callback=self._logout_callback,
+                errback=None,
+                meta={"playwright": True, "playwright_include_page": True, "playwright_context": "default"},
+                dont_filter=True,
+            )
+            # We send the request through the Scrapy engine
+            self.crawler.engine.crawl(req, spider=self)
+            self.logger.info("[ERRBACK] Scheduled logout request to free server session (no page present)")
+        except Exception as e:
+            self.logger.error("[ERRBACK] Could not schedule logout request: %s", e)
+
+    async def _logout_callback(self, response):
+        """Callback для logout-request, який створює playwright page автоматично."""
+        page = response.meta.get("playwright_page")
+        if not page:
+            self.logger.error("[LOGOUT_CB] No playwright_page in logout callback")
+            return
+        try:
+            await self._logout_in_context(page.context, via_ui=False, close_context=False)
+        finally:
+            await self.safe_close_page(page, "logout_callback")

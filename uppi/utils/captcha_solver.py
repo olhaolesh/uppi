@@ -25,7 +25,7 @@ async def solve_captcha(playwright_page: Page, solver_key, img_captcha_selector=
 
         # 2. Makes screenshot of the CAPTCHA element
         await playwright_page.wait_for_timeout(5_000)
-        captcha_bytes = await captcha_element.screenshot(path="captcha.png", type="png")
+        captcha_bytes = await captcha_element.screenshot(path="captcha_images/captcha.png", type="png")
         if not captcha_bytes:
             print("[CAPTCHA] ⚠️ Не вдалося отримати скріншот CAPTCHA.")
             return None

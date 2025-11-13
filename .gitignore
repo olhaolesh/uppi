@@ -20,3 +20,6 @@ Thumbs.db
 state.json
 # Ignore downloads 
 /downloads
+#
+# /clients/clients.csv
+captcha_images/
