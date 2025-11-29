@@ -274,12 +274,12 @@ class VisuraParser:
     #  ADDRESS PARSER
     # -------------------------------
     def _parse_address(self, text):
-        """Parse address into components."""
         raw = text.replace("\n", " ").strip()
         clean = raw
 
         parsed = {
-            "via": None,
+            "via_type": None,     # нове поле
+            "via_name": None,     # нове поле (замість via)
             "num_via": None,
             "scala": None,
             "interno": None,
@@ -287,7 +287,7 @@ class VisuraParser:
             "indirizzo_raw": raw
         }
 
-        # Витягуємо частини адреси незалежними regex
+        # --- 1. Витягуємо num_via / scala / interno / piano ---
         for key, pattern in self.ADDRESS_PATTERNS.items():
             m = pattern.search(clean)
             if m:
@@ -297,14 +297,25 @@ class VisuraParser:
 
         clean = clean.strip()
 
-        # Визначення via
+        # --- 2. Витягуємо тип та назву вулиці ---
         m = self.STREET_TYPE_REGEX.match(clean)
         if m:
-            parsed["via"] = m.group(0).strip()
+            via_type = m.group(1).strip()
+            rest = m.group(2).strip()
+
+            # ❗ Обрізаємо зайвий текст після справжньої назви (до першого "  ")
+            # Італійці люблять вставляти "Variazione del ..." прямо після назви
+            rest = re.split(r'\s{2,}|Variazione|Annotazione|Aggiornamento', rest, 1)[0].strip()
+
+            parsed["via_type"] = via_type
+            parsed["via_name"] = rest
+
         else:
-            parsed["via"] = clean if clean else None
+            # fallback: якщо зовсім не впізнано
+            parsed["via_name"] = clean
 
         return parsed
+
 
 
 # --------------------------------------------------
