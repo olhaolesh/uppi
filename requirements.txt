@@ -1,8 +1,10 @@
 Scrapy==2.13.3
-playwright==.1.55.0
+playwright==1.55.0
 scrapy-playwright==0.0.44
 python-decouple==3.8
 2captcha-python==2.0.1
 PyMuPDF==1.26.6
 camelot-py==1.0.9
 python-docx==1.2.0
+pyyaml==6.0.3
+psycopg2==2.9.11

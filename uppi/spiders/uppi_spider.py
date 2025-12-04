@@ -1,20 +1,48 @@
+"""
+Головний Scrapy-павук для роботи з AE + SISTER.
+
+Логіка:
+- start():
+    - чистить state.json та captcha_images
+    - читає clients.yml
+    - для тих, у кого візура вже є в БД і не FORCE_UPDATE_VISURA — не чіпає SISTER, просто yield UppiItem
+    - для решти — додає в self.clients_to_fetch
+    - якщо список не порожній — стартує Playwright-логін в AE
+
+- login_and_fetch_visura():
+    - на Playwright-сторінці логіниться в AE
+    - відкриває SISTER у новій вкладці
+    - для кожного клієнта з self.clients_to_fetch:
+        - navigate_to_visure_catastali(...)
+        - solve_captcha_if_present(...)
+        - download_document(...)
+        - yield UppiItem з прапорцями успіху/фейлу
+    - наприкінці завжди робить logout (через кнопку або URL)
+"""
+
 import os
 import shutil
-import csv
+from typing import Any, Dict, List, Optional
+
 import scrapy
-from typing import Optional
 from decouple import config
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
+
+from uppi.ae.auth import authenticate_user
+from uppi.ae.captcha import solve_captcha_if_present
+from uppi.ae.download import download_document
+from uppi.ae.sister_navigation import open_sister_service, navigate_to_visure_catastali
+from uppi.ae.uppi_selectors import UppiSelectors
+from uppi.domain.clients import load_clients
+from uppi.domain.db import db_has_visura
 from uppi.items import UppiItem
-from uppi.utils.stealth import STEALTH_SCRIPT
-from uppi.utils.uppi_selectors import UppiSelectors
-from uppi.utils.captcha_solver import solve_captcha
+from uppi.utils.item_mapper import map_yaml_to_item
 from uppi.utils.playwright_helpers import apply_stealth, log_requests, get_webgl_vendor
+from uppi.utils.stealth import STEALTH_SCRIPT
 
-
+# Конфіг з env
 AE_LOGIN_URL = config("AE_LOGIN_URL")
 AE_URL_SERVIZI = config("AE_URL_SERVIZI")
-SISTER_VISURE_CATASTALI_URL = config("SISTER_VISURE_CATASTALI_URL")
 SISTER_LOGOUT_URL = config("SISTER_LOGOUT_URL")
 
 TWO_CAPTCHA_API_KEY = config("TWO_CAPTCHA_API_KEY")
@@ -27,35 +55,21 @@ class UppiSpider(scrapy.Spider):
     name = "uppi"
     allowed_domains = ["agenziaentrate.gov.it"]
 
-    DEFAULT_COMUNE: str = "PESCARA"
-    DEFAULT_TIPO_CATASTO: str = "F"
-    DEFAULT_UFFICIO: str = "PESCARA Territorio"
-
-    def load_clients(self, path: str = "clients/clients.csv"):
-        """Load clients from CSV file. Returns list of client dicts."""
-        clients = []
-        if not os.path.exists(path):
-            self.logger.error(f"[CLIENTS] File not found: {path}")
-            return clients
-
-        with open(path, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                codice = row.get("CODICE_FISCALE", "").strip()
-                if not codice:
-                    continue
-                client = {
-                    "CODICE_FISCALE": codice,
-                    "COMUNE": row.get("COMUNE", "").strip() or self.DEFAULT_COMUNE,
-                    "TIPO_CATASTO": row.get("TIPO_CATASTO", "").strip() or self.DEFAULT_TIPO_CATASTO,
-                    "UFFICIO_PROVINCIALE_LABEL": row.get("UFFICIO_PROVINCIALE_LABEL", "").strip() or self.DEFAULT_UFFICIO,
-                }
-                clients.append(client)
-        self.logger.info(f"[CLIENTS] Loaded {len(clients)} clients from {path}")
-        return clients
+    # Тут складатимемо клієнтів, для яких треба реально йти в SISTER
+    clients_to_fetch: List[Dict[str, Any]]
 
     async def start(self):
-        """Entry point: remove stale session file and start login request."""
+        """
+        Стартова точка павука (Scrapy 2.13 async start).
+
+        - видаляє старий state.json + captcha_images
+        - завантажує клієнтів
+        - вирішує, для кого потрібен SISTER, а для кого ні
+        - якщо SISTER потрібен хоча б для одного — стартує Playwright-логін
+        """
+        self.logger.info("[START] UppiSpider starting...")
+
+        # Чистимо старий state.json
         self.logger.info("[START] Cleaning old state.json if present")
         try:
             if os.path.exists("state.json"):
@@ -63,6 +77,8 @@ class UppiSpider(scrapy.Spider):
                 self.logger.info("[START] Old state.json removed")
         except Exception as e:
             self.logger.warning("[START] Failed to remove state.json: %s", e)
+
+        # Чистимо папку captcha_images
         self.logger.info("[START] Cleaning old captcha_images folder if present")
         try:
             if os.path.exists("captcha_images"):
@@ -71,415 +87,349 @@ class UppiSpider(scrapy.Spider):
         except Exception as e:
             self.logger.warning("[START] Failed to remove captcha_images folder: %s", e)
 
+        # Завантажуємо клієнтів з clients.yml
+        clients = load_clients()
+        if not clients:
+            self.logger.error("[START] No clients found in clients.yml, aborting spider")
+            return
+
+        self.clients_to_fetch = []
+        self.logger.info("[START] Loaded %d clients from clients.yml", len(clients))
+
+        # Вирішуємо, кого потрібно качати з SISTER
+        for client in clients:
+            cf = client.get("LOCATORE_CF")
+            if not cf:
+                self.logger.error("[START] Client without LOCATORE_CF in clients.yml: %r", client)
+                continue
+
+            force_update = bool(client.get("FORCE_UPDATE_VISURA"))
+
+            try:
+                has_visura = db_has_visura(cf)
+            except Exception as e:
+                self.logger.exception("[DB] Error checking visura presence for %s: %s", cf, e)
+                # Якщо БД не відповіла — краще спробувати сходити в SISTER, ніж пропустити
+                has_visura = False
+
+            if has_visura and not force_update:
+                # Візура вже є в БД — SISTER не чіпаємо
+                self.logger.info(
+                    "[START] Skip SISTER for %s, visura already in DB and FORCE_UPDATE_VISURA is false",
+                    cf,
+                )
+                mapped = map_yaml_to_item(client)
+                mapped.setdefault("locatore_cf", cf)
+                mapped.setdefault("visura_source", "db_cache")
+                mapped.setdefault("visura_needs_refresh", False)
+                mapped.setdefault("visura_downloaded", False)
+                mapped.setdefault("visura_download_path", None)
+                mapped.setdefault("nav_to_visure_catastali", False)
+                mapped.setdefault("captcha_ok", False)
+
+                yield UppiItem(**mapped)
+            else:
+                # Потрібно сходити в SISTER
+                self.logger.info(
+                    "[START] Will fetch visura from SISTER for %s (force_update=%s, in_db=%s)",
+                    cf,
+                    force_update,
+                    has_visura,
+                )
+                self.clients_to_fetch.append(client)
+
+        if not self.clients_to_fetch:
+            self.logger.info("[START] No clients require SISTER fetch. Spider finished.")
+            return
+
+        self.logger.info("[START] %d clients require SISTER fetch", len(self.clients_to_fetch))
+
+        # Стартуємо Playwright-логін у AE
         yield scrapy.Request(
             url=AE_LOGIN_URL,
-            callback=self.login,
+            callback=self.login_and_fetch_visura,
             meta={
                 "playwright": True,
-                "playwright_context": "default",
                 "playwright_include_page": True,
+                "playwright_context": "default",
             },
             errback=self.errback_close_page,
+            dont_filter=True,
         )
 
-    async def login(self, response):
+    async def login_and_fetch_visura(self, response):
         """
-        Login flow.
-        - apply stealth
-        - fill credentials
-        - wait for PROFILE_INFO selector
-        - always close original page at the end of this function
+        Playwright-callback:
+        - логін в AE
+        - відкриття SISTER у новій вкладці
+        - цикл по self.clients_to_fetch: навігація, CAPTCHA, download
+        - logout у фіналі
         """
         page: Optional[Page] = response.meta.get("playwright_page")
         if not page:
-            self.logger.error("[LOGIN] No Playwright page in response.meta")
+            self.logger.error("[LOGIN] No Playwright page in response.meta, cannot continue")
             return
 
-        try:
-            await apply_stealth(page, STEALTH_SCRIPT)
-            await page.route("**", log_requests)
-
-            # Wait and interact with UI
-            await page.wait_for_selector(UppiSelectors.FISCOLINE_TAB)
-            await page.click(UppiSelectors.FISCOLINE_TAB)
-
-            await page.wait_for_selector(UppiSelectors.USERNAME_FIELD, timeout=10_000)
-            await page.wait_for_timeout(1_000)
-            await page.fill(UppiSelectors.USERNAME_FIELD, AE_USERNAME)
-            await page.fill(UppiSelectors.PASSWORD_FIELD, AE_PASSWORD)
-            await page.fill(UppiSelectors.PIN_FIELD, AE_PIN)
-            await page.click(UppiSelectors.ACCEDI_BUTON)
-            self.logger.info("[LOGIN] Accedi clicked, awaiting profile info")
-
-            try:
-                await page.wait_for_selector(UppiSelectors.PROFILE_INFO, timeout=10_000)
-                self.logger.info("[LOGIN] Login successful. profile info found")
-            except PlaywrightTimeoutError as err:
-                self.logger.error("[LOGIN] Profile not found after login: %s", err)
-                # if state.json exists remove it as login failed to produce valid state
-                if os.path.exists("state.json"):
-                    try:
-                        os.remove("state.json")
-                        self.logger.info("[LOGIN] Removed leftover state.json after failed login")
-                    except Exception as rm_err:
-                        self.logger.warning("[LOGIN] Failed remove leftover state.json: %s", rm_err)
-            # continue regardless; next request will attempt to use existing session if any
-        except PlaywrightTimeoutError as err:
-            self.logger.error("[LOGIN] Playwright timeout during login: %s", err)
-        except Exception as e:
-            self.logger.exception("[LOGIN] Unexpected error during login: %s", e)
-        finally:
-            try:
-                await self.safe_close_page(page, "login")
-                self.logger.debug("[LOGIN] Playwright page closed")
-            except Exception:
-                # closing page might fail if page already closed; ignore
-                pass
-
-        # Continue to service parsing
-        yield scrapy.Request(
-            url=AE_URL_SERVIZI,
-            callback=self.preparare_sister_service,
-            meta={
-                "playwright": True,
-                "playwright_context": "default",
-                "playwright_include_page": True,
-            },
-            errback=self.errback_close_page,
-        )
-
-    async def preparare_sister_service(self, response):
-        """Prepare SISTER service page and process clients."""
-        page: Optional[Page] = response.meta.get("playwright_page")
-        if not page:
-            self.logger.error("[PARSE] No Playwright page provided")
-            return
-
-        # Pre-navigation setup - stealth, logging, WebGL info
+        # Pre-navigation setup: stealth, логування запитів, WebGL
         try:
             await apply_stealth(page, STEALTH_SCRIPT)
             await page.route("**", log_requests)
             vendor = await get_webgl_vendor(page)
-            self.logger.debug("[PARSE] WebGL vendor: %s", vendor)
+            self.logger.debug("[LOGIN] WebGL vendor: %s", vendor)
         except Exception as e:
-            self.logger.warning("[PARSE] Pre-navigation setup failed: %s", e)
+            self.logger.warning("[LOGIN] Pre-navigation setup failed: %s", e)
 
-        # Open sister service and get sister_page
-        sister_page = await self._open_sister_service(page)
-        if not sister_page:
-            self.logger.error("[PARSE] Could not open SISTER page. Aborting parse.")
-            return
-
-        clients = self.load_clients("clients/clients.csv")
-        if not clients:
-            self.logger.error("[PARSE] No clients found, aborting")
-            await self._logout_in_context(page.context, via_ui=True)
-            return
-
+        # Логін у AE
+        login_ok = False
         try:
-            for i, client in enumerate(clients, start=1):
-                item: UppiItem = UppiItem()
-                item["nav_to_visure_catastali"] = True
-                item["codice_fiscale"] = client["CODICE_FISCALE"] or "User without codice fiscale"
-                item["comune"] = client["COMUNE"] or "Unknown Comune"
-                item["tipo_catasto"] = client["TIPO_CATASTO"] or "Unknown Tipo Catasto"
-                item["ufficio_label"] = client["UFFICIO_PROVINCIALE_LABEL"] or "Unknown Ufficio"
+            login_ok = await authenticate_user(
+                page=page,
+                ae_username=AE_USERNAME,
+                ae_password=AE_PASSWORD,
+                ae_pin=AE_PIN,
+                logger=self.logger,
+            )
+        except PlaywrightTimeoutError as err:
+            self.logger.error("[LOGIN] Playwright timeout during login: %s", err)
+        except Exception as e:
+            self.logger.exception("[LOGIN] Unexpected error during login: %s", e)
 
-                self.logger.info(f"[CLIENT {i}/{len(clients)}] Processing {client['CODICE_FISCALE']}")
-                try:
-                    ok = await self._navigate_to_visure_catastali(
-                        sister_page,
-                        codice_fiscale=client["CODICE_FISCALE"],
-                        comune=client["COMUNE"],
-                        tipo_catasto=client["TIPO_CATASTO"],
-                        ufficio_label=client["UFFICIO_PROVINCIALE_LABEL"],
-                    )
-                    if not ok:
-                        self.logger.warning(f"[CLIENT {i}] Navigation failed, skipping client")
-                        item["nav_to_visure_catastali"] = False
-                        yield item  # yield item even on failure to record attempt
-                        continue
+        if not login_ok:
+            self.logger.error("[LOGIN] Login failed, aborting SISTER flow")
+            await self.safe_close_page(page, "login_failed")
+            return
 
-                    await self._solve_captcha_if_present(sister_page, client["CODICE_FISCALE"])
-                    await self._download_document(sister_page, client["CODICE_FISCALE"])
-                    yield item
-                except Exception as e:
-                    self.logger.exception(f"[CLIENT {i}] Error processing client: {e}")
-                    continue  # move to next client
-
-        finally:
-            # Always logout at the very end
-            self.logger.info("[PARSE] All clients processed. Logging out...")
-            await self._logout_in_context(sister_page.context, via_ui=True)
-            self.logger.info("[PARSE] Logout completed.")
-
-    async def _open_sister_service(self, page: Page) -> Optional[Page]:
-        """Open SISTER in a new page/tab and save state.json. Returns sister_page or None."""
-        new_page_ctx = None
+        # Відкриваємо SISTER у новій вкладці
         sister_page: Optional[Page] = None
         try:
-            await page.wait_for_selector(UppiSelectors.PROFILE_INFO, timeout=10_000)
-            await page.wait_for_selector(UppiSelectors.TUOI_PREFERITI_SECTION, timeout=10_000)
-            await page.locator(UppiSelectors.TUOI_PREFERITI_SECTION).click()
-            # open new page via middle click and capture it
-            try:
-                async with page.context.expect_page() as ctx:
-                    await page.click(UppiSelectors.VAI_AL_SERVIZIO_BUTTON, button="middle")
-                new_page_ctx = ctx
-                sister_page = await new_page_ctx.value
-                await sister_page.bring_to_front()
-                await self.safe_close_page(page, "AE page")  # close main AE page
-                self.logger.info("[OPEN_SISTER] SISTER page opened and AE main closed")
-            except PlaywrightTimeoutError as e:
-                self.logger.warning("[OPEN_SISTER] Opening SISTER timed out: %s", e)
-                return None
-        except PlaywrightTimeoutError as e:
-            self.logger.error("[OPEN_SISTER] Required selector not found before opening SISTER: %s", e)
-            return None
+            sister_page = await open_sister_service(
+                ae_page=page,
+                servizi_url=AE_URL_SERVIZI,
+                logger=self.logger,
+                safe_close_page=self.safe_close_page,
+            )
         except Exception as e:
-            self.logger.exception("[OPEN_SISTER] Unexpected error while opening SISTER: %s", e)
-            return None
+            self.logger.exception("[SISTER] Error while opening SISTER service: %s", e)
 
-        # Accept confirmation and save storage state
-        try:
-            await sister_page.wait_for_selector(UppiSelectors.CONFERMA_BUTTON, timeout=10_000)
-            await sister_page.wait_for_timeout(1_000)
-            await sister_page.click(UppiSelectors.CONFERMA_BUTTON)
-            await sister_page.wait_for_timeout(3_000)
-            # store auth state to file for reuse
-            try:
-                await sister_page.context.storage_state(path="state.json")
-                self.logger.info("[OPEN_SISTER] state.json saved")
-            except Exception as e:
-                self.logger.warning("[OPEN_SISTER] Failed to save state.json: %s", e)
-        except PlaywrightTimeoutError as e:
-            self.logger.warning("[OPEN_SISTER] Conferma button not found: %s", e)
-            await self._logout_in_context(page.context, via_ui=True)
-
-            # still return sister_page; maybe flow continues with different UI
-        except Exception as e:
-            self.logger.exception("[OPEN_SISTER] Error after opening SISTER: %s", e)
-
-        return sister_page
-
-    async def _navigate_to_visure_catastali(self, sister_page: Page,
-                                            codice_fiscale: str,
-                                            comune: str,
-                                            tipo_catasto: str,
-                                            ufficio_label: str) -> bool:
-        """
-        Make the series of clicks/selects inside SISTER to reach property list.
-        Returns True on success, False on failure.
-        """
-        try:
-            # await sister_page.click(UppiSelectors.CONSULTAZIONI_CERTIFACAZIONI)
-            # await sister_page.wait_for_selector(UppiSelectors.VISURE_CATASTALI, timeout=10_000)
-            # await sister_page.wait_for_timeout(1_000)
-            # await sister_page.click(UppiSelectors.VISURE_CATASTALI)
-            # await sister_page.wait_for_timeout(1_000)
-            await sister_page.goto(SISTER_VISURE_CATASTALI_URL)
-            if sister_page.url != SISTER_VISURE_CATASTALI_URL:
-                self.logger.warning("[NAVIGATE TO VISURE CATASTALI] Navigation to VISURE CATASTALI URL failed")
-                return False
-            # Handle possible "Conferma Lettura"
-            try:
-                await sister_page.wait_for_selector(UppiSelectors.CONFERMA_LETTURA, timeout=2_000)
-                await sister_page.click(UppiSelectors.CONFERMA_LETTURA)
-            except PlaywrightTimeoutError:
-                self.logger.info("[NAVIGATE TO VISURE CATASTALI] Conferma Lettura not found, possibly already accepted")
-
-            # Select ufficio
-            try:
-                select_ufficio = sister_page.locator(UppiSelectors.SELECT_UFFICIO)
-                await select_ufficio.wait_for(timeout=5_000)
-                await select_ufficio.select_option(label=ufficio_label)
-                await sister_page.click(UppiSelectors.APLICA_BUTTON)
-            except PlaywrightTimeoutError:
-                self.logger.warning("[NAVIGATE TO VISURE CATASTALI] Ufficio selection failed or timed out")
-                return False
-
-            # Select catasto
-            select_catasto = sister_page.locator(UppiSelectors.SELECT_CATASTO)
-            await select_catasto.wait_for()
-            await sister_page.wait_for_timeout(1_000)
-            await select_catasto.select_option(value=tipo_catasto)
-
-            # Select comune
-            select_comune = sister_page.locator(UppiSelectors.SELECT_COMUNE)
-            await select_comune.wait_for()
-            await sister_page.wait_for_timeout(1_000)
-            await select_comune.select_option(label=comune)
-
-            # Fill codice fiscale and search
-            await sister_page.click(UppiSelectors.CODICE_FISCALE_RADIO)
-            await sister_page.fill(UppiSelectors.CODICE_FISCALE_FIELD, codice_fiscale)
-            await sister_page.click(UppiSelectors.RICERCA_BUTTON)
-
-            try:
-                # handle omonimi list and select first property
-                await sister_page.wait_for_selector(UppiSelectors.SELECT_OMONIMI, timeout=3_000)
-                await sister_page.click(UppiSelectors.SELECT_OMONIMI)
-            except PlaywrightTimeoutError:
-                self.logger.info("[NAVIGATE TO VISURE CATASTALI] Codice fiscale, maybe is invalid or no properties found")
-                return False
-            except Exception as e:
-                self.logger.exception("[NAVIGATE TO VISURE CATASTALI] Error selecting omonimi: %s", e)
-                return False
-
-            # If you want to select property by Elenco immobili per diritti e quote instead Visura per soggetto, uncomment below and comment the visura per soggetto line
-            # await sister_page.click(UppiSelectors.IMOBILI_BUTTON)
-            # await sister_page.wait_for_selector(UppiSelectors.SELECT_IMOBILE, timeout=10_000)
-            # await sister_page.wait_for_timeout(1_000)
-            # await sister_page.click(UppiSelectors.SELECT_IMOBILE)
-            # await sister_page.click(UppiSelectors.VISURA_PER_IMOBILE_BUTTON)
-
-            # Proceed to visura per soggetto
-            await sister_page.click(UppiSelectors.VISURA_PER_SOGGECTO_BUTTON)
-
-            self.logger.info(f"[NAVIGATE] Completed for {codice_fiscale}")
-            return True
-        except PlaywrightTimeoutError as e:
-            self.logger.warning("[NAVIGATE TO VISURE CATASTALI] Timeout during navigation: %s", e)
-            return False
-        except Exception as e:
-            self.logger.exception("[NAVIGATE TO VISURE CATASTALI] Unexpected error during navigation: %s", e)
-            return False
-
-    async def _solve_captcha_if_present(self, sister_page: Page, codice_fiscale: str = ""):
-        """Detect and solve CAPTCHA when present. Logs detailed status."""
-        try:
-            await sister_page.wait_for_selector(UppiSelectors.IMG_CAPTCHA, timeout=5_000)
-        except PlaywrightTimeoutError:
-            self.logger.info("[CAPTCHA] No CAPTCHA detected")
-            await sister_page.click(UppiSelectors.INOLTRA_BUTTON)
-            inoltra_button = sister_page.locator(UppiSelectors.INOLTRA_BUTTON)
-            try:
-                await inoltra_button.wait_for(state="hidden", timeout=10_000)
-            except PlaywrightTimeoutError:
-                # If it does not hide, still proceed and log
-                self.logger.warning("[CAPTCHA] Inoltra button did not hide after submission")
+        if not sister_page:
+            self.logger.error("[SISTER] Could not obtain SISTER page, aborting")
+            # На цей момент AE-сторінка могла вже закритися в open_sister_service,
+            # тому на всяк випадок пробуємо її закрити ще раз
+            await self.safe_close_page(page, "login_page_after_failed_sister")
             return
 
-        # if we reach here, CAPTCHA element exists
+        # Основний цикл по клієнтах
         try:
-            self.logger.info("[CAPTCHA] Captcha detected, invoking solver")
-            await sister_page.click(UppiSelectors.CAPTCHA_FIELD)
-            captcha_solution = await solve_captcha(sister_page, TWO_CAPTCHA_API_KEY, codice_fiscale, UppiSelectors.IMG_CAPTCHA)
-            if not captcha_solution:
-                self.logger.error("[CAPTCHA] Solver returned no solution")
-                return
+            total = len(self.clients_to_fetch)
+            for idx, client in enumerate(self.clients_to_fetch, start=1):
+                cf = client.get("LOCATORE_CF")
+                comune = client.get("COMUNE") or "PESCARA"
+                tipo_catasto = client.get("TIPO_CATASTO") or "F"
+                ufficio_label = client.get("UFFICIO_PROVINCIALE_LABEL") or "PESCARA Territorio"
 
-            await sister_page.fill(UppiSelectors.CAPTCHA_FIELD, captcha_solution)
-            await sister_page.click(UppiSelectors.INOLTRA_BUTTON)
-            inoltra_button = sister_page.locator(UppiSelectors.INOLTRA_BUTTON)
+                self.logger.info(
+                    "[CLIENT %d/%d] Processing CF=%s, comune=%s, tipo_catasto=%s, ufficio=%s",
+                    idx,
+                    total,
+                    cf,
+                    comune,
+                    tipo_catasto,
+                    ufficio_label,
+                )
+
+                mapped = map_yaml_to_item(client)
+                mapped.setdefault("locatore_cf", cf)
+                mapped["visura_source"] = "sister"
+                mapped["visura_needs_refresh"] = False
+
+                # 1. Навігація до форми і запуск "Visura per soggetto"
+                nav_ok = await navigate_to_visure_catastali(
+                    sister_page=sister_page,
+                    codice_fiscale=cf,
+                    comune=comune,
+                    tipo_catasto=tipo_catasto,
+                    ufficio_label=ufficio_label,
+                    logger=self.logger,
+                )
+                mapped["nav_to_visure_catastali"] = bool(nav_ok)
+
+                if not nav_ok:
+                    self.logger.warning(
+                        "[CLIENT %d/%d] Navigation to Visure catastali failed for %s",
+                        idx,
+                        total,
+                        cf,
+                    )
+                    mapped["captcha_ok"] = False
+                    mapped["visura_downloaded"] = False
+                    mapped["visura_download_path"] = None
+                    yield UppiItem(**mapped)
+                    continue
+
+                # 2. Обробка CAPTCHA (якщо є)
+                captcha_ok = await solve_captcha_if_present(
+                    page=sister_page,
+                    two_captcha_key=TWO_CAPTCHA_API_KEY,
+                    logger=self.logger,
+                    codice_fiscale=cf,
+                )
+                mapped["captcha_ok"] = bool(captcha_ok)
+
+                if not captcha_ok:
+                    self.logger.warning(
+                        "[CLIENT %d/%d] CAPTCHA solving failed for %s",
+                        idx,
+                        total,
+                        cf,
+                    )
+                    mapped["visura_downloaded"] = False
+                    mapped["visura_download_path"] = None
+                    yield UppiItem(**mapped)
+                    continue
+
+                # 3. Завантаження PDF-візури
+                download_path = await download_document(
+                    page=sister_page,
+                    codice_fiscale=cf,
+                    logger=self.logger,
+                )
+                mapped["visura_downloaded"] = download_path is not None
+                mapped["visura_download_path"] = download_path
+
+                if not download_path:
+                    self.logger.error(
+                        "[CLIENT %d/%d] Download failed for %s",
+                        idx,
+                        total,
+                        cf,
+                    )
+                else:
+                    self.logger.info(
+                        "[CLIENT %d/%d] Downloaded visura for %s -> %s",
+                        idx,
+                        total,
+                        cf,
+                        download_path,
+                    )
+
+                # Віддаємо item у pipeline
+                yield UppiItem(**mapped)
+
+        finally:
+            # Гарантований logout з SISTER (через UI або endpoint)
             try:
-                await inoltra_button.wait_for(state="hidden", timeout=10_000)
-            except PlaywrightTimeoutError:
-                # If it does not hide, still proceed and log
-                self.logger.warning("[CAPTCHA] Inoltra button did not hide after submission")
-            self.logger.info("[CAPTCHA] CAPTCHA submitted")
-        except PlaywrightTimeoutError as e:
-            self.logger.warning("[CAPTCHA] Timeout while solving captcha: %s", e)
-        except Exception as e:
-            self.logger.exception("[CAPTCHA] Unexpected error in captcha handling: %s", e)
+                if sister_page:
+                    await self._logout_in_context(
+                        context=sister_page.context,
+                        via_ui=True,
+                        close_context=True,
+                    )
+            except Exception as e:
+                self.logger.warning("[LOGOUT] Error during logout_in_context: %s", e)
 
-    async def _download_document(self, sister_page: Page, codice_fiscale: str):
-        """Trigger document download and save file to downloads/ folder."""
-        downloads_dir = os.path.join(os.getcwd(), f"downloads/{codice_fiscale}")
-        os.makedirs(downloads_dir, exist_ok=True)
-
-        download_ctx = None
-        download_obj = None
-
-        try:
-            # attempt to expect a download and click the 'Apri' button
-            async with sister_page.expect_download() as download_ctx:
-                await sister_page.wait_for_selector(UppiSelectors.APRI_BUTTON, timeout=60_000)
-                await sister_page.click(UppiSelectors.APRI_BUTTON)
-                self.logger.info("[DOWNLOAD] Clicked Apri, waiting for download to appear")
-            # retrieve download object
-            download_obj = await download_ctx.value
-        except PlaywrightTimeoutError as e:
-            self.logger.warning("[DOWNLOAD] Waiting for download timed out: %s", e)
-        except Exception as e:
-            self.logger.exception("[DOWNLOAD] Unexpected error when initiating download: %s", e)
-
-        if not download_obj:
-            self.logger.error("[DOWNLOAD] No download object obtained. Aborting save.")
-            return
-
-        try:
-            # suggested = download_obj.suggested_filename
-            visura_file_name = f"VISURA_{codice_fiscale}.pdf"
-            download_path = os.path.join(downloads_dir, visura_file_name)
-            await download_obj.save_as(download_path)
-            self.logger.info("[DOWNLOAD] File saved: %s", download_path)
-        except Exception as e:
-            self.logger.exception("[DOWNLOAD] Failed to save download: %s", e)
+            # На всяк випадок пробуємо закрити сторінку
+            await self.safe_close_page(sister_page, "sister_final")
 
     async def safe_close_page(self, page: Optional[Page], label: str = ""):
-        """Safely close a Playwright page with logging."""
+        """
+        Безпечне закриття Playwright-сторінки з логуванням.
+        Не кидає помилки, якщо сторінка вже закрита чи None.
+        """
         if not page:
-            self.logger.debug(f"[CLOSE] No page to close {label}")
+            self.logger.debug("[CLOSE] No page to close (%s)", label)
             return
+
         try:
             await page.close()
-            self.logger.debug(f"[CLOSE] Page closed {label}")
+            self.logger.debug("[CLOSE] Page closed (%s)", label)
         except Exception as e:
-            self.logger.warning(f"[CLOSE] Failed to close page {label}: {e}")
+            self.logger.warning("[CLOSE] Failed to close page (%s): %s", label, e)
 
-    async def _logout_in_context(self, context, via_ui: bool = True, close_context: bool = False):
+    async def _logout_in_context(
+        self,
+        context,
+        via_ui: bool = True,
+        close_context: bool = False,
+    ) -> bool:
         """
-        Universal logout within the given context.
-        - via_ui=True: try clicking the 'Esci' button (if present), otherwise fallback -> goto endpoint.
-        - close_context=True: closes the context at the end.
-        Returns True if a logout attempt was made (at least some).
+        Універсальний logout в рамках Playwright-контексту.
+
+        - via_ui=True: спробує клікнути по кнопці 'Esci' (якщо є), інакше — перехід на SISTER_LOGOUT_URL.
+        - якщо в контексті немає відкритих сторінок — створює тимчасову сторінку, йде на logout URL і закриває її.
+        - close_context=True: закриває context в кінці.
+
+        Повертає:
+            True  - якщо була зроблена спроба logout (не обов'язково успішна)
+            False - якщо сталася неочікувана помилка
         """
-        page = None
+        page: Optional[Page] = None
         created_temp = False
+
         try:
             pages = context.pages
 
-            # If the context is empty, create a temporary page and simply go to the endpoint
+            # Якщо сторінок немає — створимо тимчасову для logout endpoint
             if not pages:
                 created_temp = True
-                self.logger.warning("[LOGOUT] No open pages in context, creating temporary one for endpoint logout")
+                self.logger.warning(
+                    "[LOGOUT] No open pages in context, creating temporary page for endpoint logout"
+                )
                 page = await context.new_page()
                 try:
-                    await page.goto(SISTER_LOGOUT_URL)
-                    await page.wait_for_selector(UppiSelectors.LOGOUT_BUTTON, timeout=8_000)
-                    self.logger.info("[LOGOUT] Navigated to logout endpoint")
+                    await page.goto(SISTER_LOGOUT_URL, wait_until="networkidle", timeout=8_000)
+                    self.logger.info("[LOGOUT] Navigated to logout endpoint (temp page)")
                     await page.wait_for_timeout(600)
                 except Exception as e:
-                    self.logger.debug(f"[LOGOUT] goto logout endpoint failed or timed out: {e}")
+                    self.logger.debug(
+                        "[LOGOUT] goto logout endpoint (temp page) failed or timed out: %s", e
+                    )
                 return True
 
-            # If the page exists, use the last one
+            # Беремо останню сторінку в контексті
             page = pages[-1]
             ui_success = False
 
-            # --- 1) Try via UI if allowed ---
+            # 1) Пробуємо logout через UI, якщо дозволено
             if via_ui:
                 try:
-                    await page.wait_for_selector(UppiSelectors.ESCI_SISTER_BUTTON, timeout=5_000)
+                    await page.wait_for_selector(
+                        UppiSelectors.ESCI_SISTER_BUTTON,
+                        timeout=5_000,
+                    )
                     await page.click(UppiSelectors.ESCI_SISTER_BUTTON)
-                    self.logger.info("[LOGOUT] Clicked Esci button (UI)")
+                    self.logger.info("[LOGOUT] Clicked 'Esci' button (UI)")
                     await page.wait_for_timeout(1_000)
                     ui_success = True
                 except PlaywrightTimeoutError:
-                    self.logger.debug("[LOGOUT] Esci button not found, falling back to endpoint")
+                    self.logger.debug(
+                        "[LOGOUT] 'Esci' button not found, falling back to endpoint logout"
+                    )
                 except Exception as e:
-                    self.logger.debug(f"[LOGOUT] Esci click failed ({type(e).__name__}): {e}")
+                    self.logger.debug(
+                        "[LOGOUT] 'Esci' click failed (%s): %s",
+                        type(e).__name__,
+                        e,
+                    )
 
-            # --- 2) If the UI didn't work, try the endpoint ---
+            # 2) Якщо через UI не вдалось — йдемо на endpoint
             if not ui_success:
                 try:
-                    await page.goto(SISTER_LOGOUT_URL)
-                    await page.wait_for_selector(UppiSelectors.LOGOUT_BUTTON, timeout=8_000)
-                    self.logger.info("[LOGOUT] Navigated to logout endpoint (fallback)")
+                    await page.goto(SISTER_LOGOUT_URL, wait_until="networkidle", timeout=8_000)
+                    # LOGOUT_BUTTON тут умовний маркер, може не з'явитись — не критично
+                    try:
+                        await page.wait_for_selector(UppiSelectors.LOGOUT_BUTTON, timeout=8_000)
+                        self.logger.info(
+                            "[LOGOUT] Navigated to logout endpoint and LOGOUT_BUTTON appeared (fallback)"
+                        )
+                    except PlaywrightTimeoutError:
+                        self.logger.info(
+                            "[LOGOUT] Logout endpoint opened but LOGOUT_BUTTON not detected (fallback)"
+                        )
                     await page.wait_for_timeout(600)
                 except Exception as e:
-                    self.logger.debug(f"[LOGOUT] goto logout endpoint failed or timed out: {e}")
+                    self.logger.debug(
+                        "[LOGOUT] goto logout endpoint (fallback) failed or timed out: %s", e
+                    )
 
             return True
 
@@ -487,62 +437,85 @@ class UppiSpider(scrapy.Spider):
             self.logger.exception("[LOGOUT] Unexpected error in logout helper: %s", e)
             return False
         finally:
-            # Close the temporary page if created one
+            # Закриваємо тимчасову сторінку, якщо створювали
             if created_temp and page:
                 try:
                     await page.close()
+                    self.logger.debug("[LOGOUT] Temporary logout page closed")
                 except Exception:
                     pass
 
-            # Close the context if requested.
+            # Закриваємо контекст, якщо просили
             if close_context:
                 try:
                     await context.close()
                     self.logger.info("[LOGOUT] Context closed")
                 except Exception as e:
-                    self.logger.warning(f"[LOGOUT] Failed to close context: {e}")
+                    self.logger.warning("[LOGOUT] Failed to close context: %s", e)
 
     async def errback_close_page(self, failure):
-        """Errback: ensure Playwright page/context is cleaned and closed on request failure."""
+        """
+        Errback для Scrapy-запитів з Playwright:
+        - якщо є сторінка — робить logout через її context і закриває сторінку,
+        - якщо немає — створює окремий Request на logout URL з Playwright, щоб звільнити серверну сесію.
+        """
         page: Optional[Page] = None
         try:
             page = failure.request.meta.get("playwright_page")
         except Exception:
-            pass
+            page = None
 
         if page:
             try:
-                # We are trying to make UI logout, but if button is missing - helper will fall back to endpoint
-                await self._logout_in_context(page.context, via_ui=True, close_context=False)
+                await self._logout_in_context(
+                    context=page.context,
+                    via_ui=True,
+                    close_context=False,
+                )
             except Exception as e:
-                self.logger.warning("[ERRBACK] logout via page.context failed: %s", e)
+                self.logger.warning("[ERRBACK] Logout via page.context failed: %s", e)
             finally:
                 await self.safe_close_page(page, "errback")
                 return
 
-        # Якщо page немає — плануємо окремий Request щоб відкрити новий playwright page і виконати logout там
+        # Якщо сторінки немає — плануємо окремий Request для відкриття нової сторінки з logout URL
         try:
             logout_full_url = SISTER_LOGOUT_URL
             req = scrapy.Request(
                 url=logout_full_url,
                 callback=self._logout_callback,
                 errback=None,
-                meta={"playwright": True, "playwright_include_page": True, "playwright_context": "default"},
+                meta={
+                    "playwright": True,
+                    "playwright_include_page": True,
+                    "playwright_context": "default",
+                },
                 dont_filter=True,
             )
-            # We send the request through the Scrapy engine
             self.crawler.engine.crawl(req, spider=self)
-            self.logger.info("[ERRBACK] Scheduled logout request to free server session (no page present)")
+            self.logger.info(
+                "[ERRBACK] Scheduled logout request with Playwright to free server session (no page present)"
+            )
         except Exception as e:
             self.logger.error("[ERRBACK] Could not schedule logout request: %s", e)
 
     async def _logout_callback(self, response):
-        """Callback для logout-request, який створює playwright page автоматично."""
-        page = response.meta.get("playwright_page")
+        """
+        Callback для logout-request, який автоматично створює Playwright page.
+
+        Тут ми вже на logout URL, але все одно проходимо через _logout_in_context(),
+        щоб логіка була однакова.
+        """
+        page: Optional[Page] = response.meta.get("playwright_page")
         if not page:
             self.logger.error("[LOGOUT_CB] No playwright_page in logout callback")
             return
+
         try:
-            await self._logout_in_context(page.context, via_ui=False, close_context=False)
+            await self._logout_in_context(
+                context=page.context,
+                via_ui=False,   # тут UI не потрібен, ми вже на endpoint
+                close_context=False,
+            )
         finally:
             await self.safe_close_page(page, "logout_callback")
