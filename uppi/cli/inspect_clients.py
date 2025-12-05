@@ -1,3 +1,6 @@
+"""
+
+"""
 import argparse
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -23,6 +26,7 @@ CLIENTS_YAML = config("UPPI_CLIENTS_YAML", default="clients/clients.yml")
 # ---------------------------
 
 def load_clients() -> List[Dict[str, Any]]:
+    """Завантажуємо clients.yml і повертаємо список рядків (словників)."""
     try:
         with open(CLIENTS_YAML, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or []
@@ -36,6 +40,7 @@ def load_clients() -> List[Dict[str, Any]]:
 
 
 def find_rows_by_cf(cf: str, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Фільтруємо рядки за LOCATORE_CF."""
     cf_norm = cf.strip().upper()
     return [
         row for row in rows
@@ -48,6 +53,7 @@ def find_rows_by_cf(cf: str, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]
 # ---------------------------
 
 def get_conn():
+    """Підключаємося до Postgres за параметрами з .env."""
     if not DB_HOST or not DB_NAME or not DB_USER or not DB_PASSWORD:
         raise RuntimeError("UPPI DB DB_HOST or DB_NAME or DB_USER or DB_PASSWORD не задано в .env")
     return psycopg2.connect(
@@ -61,7 +67,7 @@ def get_conn():
 
 def fetch_visura(conn, cf: str) -> Optional[Dict[str, Any]]:
     """
-    Таблиця visure у тебе така:
+    Таблиця visure:
 
         cf         TEXT PK
         pdf_bucket TEXT
@@ -88,6 +94,10 @@ def fetch_visura(conn, cf: str) -> Optional[Dict[str, Any]]:
 
 
 def build_visura_address(im: Dict[str, Any]) -> str:
+    """
+    Будуємо адресу об'єкта, як вона є в візурі.
+    Формат: [via_type via_name] [n. num_via] [Piano piano] [Int. interno]
+    Якщо нічого з цього немає, повертаємо indirizzo_raw."""
     bits = []
     via_type = im.get("via_type")
     via_name = im.get("via_name")
@@ -113,6 +123,13 @@ def build_real_address(im: Dict[str, Any]) -> str:
     """
     Будуємо реальну адресу об'єкта, враховуючи можливі оверрайди.
     1. Якщо є immobile_*_override, то беремо їх.
+    2. Інакше беремо звичайні поля (comune).
+    Формат: [comune - ] [via immobile_civico_override] [Piano immobile_piano_override] [Int. immobile_interno_override]
+    Параметри:
+    - immobile_via_override, 
+    - immobile_civico_override, 
+    - immobile_piano_override, 
+    - immobile_interno_override
     """
     comune = im.get("immobile_comune_override") or im.get("comune")
     via = im.get("immobile_via_override")
