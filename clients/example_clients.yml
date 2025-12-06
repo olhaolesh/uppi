@@ -1,7 +1,71 @@
-# This file shows an example of the clients.csv file you should create to process a list of clients. 
-# The first line is the headers, then the parameters for each clients, 
-# only the first parameter of client is required, the others can be left blank, separated by commas.
+# Example clients.yml for the Uppi program
+# Each item in this list represents one contract to be processed.
+# LOCATORE_CF is mandatory and used both for the Sister visura query and for filling {{LOCATORE_CF}} in the template.
+# All other fields are optional; if omitted, the program will fall back to defaults or leave the corresponding field blank.
 
-CODICE_FISCALE,COMUNE,TIPO_CATASTO,UFFICIO_PROVINCIALE_LABEL    # headers line is required with strictly these names
-RSSMRA80A01H501Z,PESCARA,F,PESCARA Territorio                   # all parameters passed
-CCMMRT77K44H501X,,,                                             # only the required parameter passed
+- LOCATORE_CF: RSSMRA80A01H599X  # mandatory fiscal code of the landlord
+  # Override default search parameters (defaults: PESCARA, F, PESCARA Territorio)
+  UFFICIO_PROVINCIALE_LABEL: PESCARA Territorio
+  COMUNE: PESCARA
+  TIPO_CATASTO: F
+  # Landlord (locatore) address
+  LOCATORE_COMUNE_RES: Montesilvano Colli
+  LOCATORE_VIA: Santa Maria
+  LOCATORE_CIVICO: 55
+  # Property (immobile) details
+  IMMOBILE_COMUNE: Montesilvano
+  IMMOBILE_VIA: C-so Umberto II
+  IMMOBILE_CIVICO: 123
+  IMMOBILE_PIANO: 5
+  IMMOBILE_INTERNO: 66
+  FOGLIO: 7
+  NUMERO: 886
+  SUB: 101
+  RENDITA: 216,91
+  SUPERFICIE_TOTALE: 90
+  CATEGORIA: A/2
+  # Contract data
+  CONTRATTO_DATA: 15/10/2025
+  # Tenant (conduttore) details
+  CONDUTTORE_NOME: Bianocchi Giovana
+  CONDUTTORE_CF: BCCGNN44M11G488W
+  CONDUTTORE_COMUNE: Roma
+  CONDUTTORE_VIA: Verdi, 99
+  # Registration data
+  DECORRENZA_DATA: 15/10/2025
+  REGISTRAZIONE_DATA: 16/10/2025
+  REGISTRAZIONE_NUM: 54321
+  AGENZIA_ENTRATE_SEDE: Chieti
+  # Elements A and B (put "X" if present, leave empty otherwise)
+  A1: X
+  A2: X
+  B1: X
+  B2: X
+  B3: X
+  B4: X
+  B5: X
+  # Elements C
+  C1:
+  C2:
+  C3: X
+  C4: X
+  C5: X
+  C6: X
+  C7: X
+  # Elements D
+  D1: X
+  D2:
+  D3:
+  D4: X
+  D5: X
+  D6:
+  D7:
+  D8: 
+  D9: 
+  D10:
+  D11:
+  D12:
+  D13:
+
+# - LOCATORE_CF: ABCDEF33G34H567I
+#   # Minimal example: only mandatory code; default values will be used for comune, tipo_catasto and ufficio_label

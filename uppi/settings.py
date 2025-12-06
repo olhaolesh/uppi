@@ -58,6 +58,10 @@ DOWNLOAD_HANDLERS = {
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = False
 
+# Configure item pipelines
+ITEM_PIPELINES = {
+    "uppi.pipelines.UppiPipeline": 300,
+}
 
 # Set settings whose default value is deprecated to a future-proof value
 TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
