@@ -8,7 +8,7 @@ CAPTCHA handling for SISTER (2Captcha integration).
 
 import os
 import base64
-from typing import Any, Optional
+from typing import Any
 
 from twocaptcha import TwoCaptcha
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
