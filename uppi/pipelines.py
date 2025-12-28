@@ -1,2039 +1,1302 @@
-"""
-Scrapy pipelines for the Uppi project.
-
-Тут відбувається "зведення" всіх шарів:
-- YAML (clients.yml через map_yaml_to_item),
-- SISTER/PDF (VisuraParser),
-- БД (збереження/зчитування immobili),
-- MinIO (зберігання PDF-візур),
-- генерація DOCX-атестацйї,
-- розрахунок canone за Accordo Pescara 2018.
-
-Результат — заповнений UppiItem, з яким вже можна:
-- робити DOCX,
-- будувати звіти,
-- дебажити весь флоу.
-
-ВАЖЛИВО: таблиця `immobili` повинна містити, крім уже існуючих полів,
-також контрактні поля:
-
-    contract_kind TEXT,                    -- CONCORDATO / TRANSITORIO / STUDENTI
-    arredato BOOLEAN,                      -- мебльованість
-    energy_class TEXT,                     -- 'A'..'G'
-    canone_contrattuale_mensile NUMERIC,   -- фактичний canone з договору
-    durata_anni INTEGER                    -- тривалість договору в роках
-
-І dataclass Immobile має мати відповідні атрибути з дефолтами (None).
-"""
-
+# uppi/pipelines.py
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Dict, List, Any
-
+import json
 import logging
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
+import psycopg2
+import psycopg2.extras
+from psycopg2 import Error as Psycopg2Error
 from itemadapter import ItemAdapter
-from minio import Minio
-from minio.error import S3Error
 from decouple import config
 
-from uppi.domain.db import db_has_visura, _get_pg_connection
-from uppi.docs.visura_pdf_parser import VisuraParser
-from uppi.domain.storage import get_visura_path, get_attestazione_path
-from uppi.docs.attestazione_template_filler import fill_attestazione_template, underscored
+from uppi.domain.db import get_pg_connection
 from uppi.domain.immobile import Immobile
-from uppi.domain.canone_models import CanoneInput, CanoneResult, ContractKind
-from uppi.domain.pescara2018_calc import compute_base_canone, CanoneCalculationError
+from uppi.domain.object_storage import ObjectStorage
+from uppi.domain.storage import get_attestazione_path, get_client_dir, get_visura_path
+from uppi.docs.visura_pdf_parser import VisuraParser
+
+from uppi.utils.audit import mask_username, safe_unlink, sha256_file, sha256_text, format_person_fullname
+from uppi.utils.parse_utils import clean_str, clean_sub,  parse_date, safe_float, to_bool_or_none
+from uppi.utils.db_utils.key_normalize import normalize_element_key
+
+# Твої існуючі модулі для DOCX (я не змінюю API, тільки викликаю)
+from uppi.docs.attestazione_template_filler import fill_attestazione_template, underscored
+
+# Якщо ці модулі є — робимо canone; якщо ні — не валимо весь пайплайн
+try:
+    from uppi.domain.pescara2018_calc import compute_base_canone, CanoneCalculationError
+    from uppi.domain.canone_models import CanoneInput, ContractKind
+except Exception:  # pragma: no cover
+    compute_base_canone = None
+    CanoneCalculationError = Exception
+    CanoneInput = None
+    ContractKind = None
+
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# MinIO/S3 configuration (зберігання PDF-візур)
-# ---------------------------------------------------------------------------
+AE_USERNAME = config("AE_USERNAME", default="").strip()
+TEMPLATE_VERSION = config("TEMPLATE_VERSION", default="pescara2018_v1").strip()
 
-MINIO_ENDPOINT = config("MINIO_ENDPOINT", default="localhost:9000")
-MINIO_ACCESS_KEY = config("MINIO_ACCESS_KEY", default="minioadmin")
-MINIO_SECRET_KEY = config("MINIO_SECRET_KEY", default="minioadmin")
-MINIO_SECURE = config("MINIO_SECURE", default="False").lower() == "true"
-MINIO_BUCKET = config("MINIO_BUCKET", default="visure")
-
-_minio_client: Minio | None = None
+PRUNE_OLD_IMMOBILI_WITHOUT_CONTRACTS = config("PRUNE_OLD_IMMOBILI_WITHOUT_CONTRACTS", default="True").strip().lower() == "true"
+DELETE_LOCAL_VISURA_AFTER_UPLOAD = config("DELETE_LOCAL_VISURA_AFTER_UPLOAD", default="False").strip().lower() == "true"
 
 
-def _get_minio_client() -> Minio:
+# ============================================================================
+# DB COLUMN SETS (жорстко по схемі БД, не по dataclass)
+# ============================================================================
+
+IMMOBILI_DB_COLUMNS = [
+    "table_num_immobile",
+    "sez_urbana",
+    "foglio",
+    "numero",
+    "sub",
+    "zona_cens",
+    "micro_zona",
+    "categoria",
+    "classe",
+    "consistenza",
+    "rendita",
+    "superficie_totale",
+    "superficie_escluse",
+    "superficie_raw",
+    "immobile_comune",
+    "immobile_comune_code",
+    "via_type",
+    "via_name",
+    "via_num",
+    "scala",
+    "interno",
+    "piano",
+    "indirizzo_raw",
+    "dati_ulteriori",
+]
+
+
+ELEMENT_KEYS = (
+    ["a1", "a2"]
+    + [f"b{i}" for i in range(1, 6)]
+    + [f"c{i}" for i in range(1, 8)]
+    + [f"d{i}" for i in range(1, 14)]
+)
+
+
+# ============================================================================
+# Helpers
+# ============================================================================
+
+def immobile_from_parsed_dict(d: Dict[str, Any]) -> Immobile:
     """
-    Повертає singleton-клієнт MinIO.
-    Створює бакет, якщо він ще не існує (на "нормальному" S3).
-    На R2 bucket_exists може не працювати — тоді просто логую і живу далі.
+    Безпечне створення Immobile з dict парсера.
     """
-    global _minio_client
-    if _minio_client is not None:
-        return _minio_client
+    # Нормалізація типів
+    if "superficie_totale" in d:
+        d["superficie_totale"] = safe_float(d.get("superficie_totale"))
+    if "superficie_escluse" in d:
+        d["superficie_escluse"] = safe_float(d.get("superficie_escluse"))
 
-    try:
-        client = Minio(
-            MINIO_ENDPOINT,
-            access_key=MINIO_ACCESS_KEY,
-            secret_key=MINIO_SECRET_KEY,
-            secure=MINIO_SECURE,
-        )
-
-        try:
-            if not client.bucket_exists(MINIO_BUCKET):
-                logger.warning(
-                    "[MINIO] Bucket %r не існує, створи його вручну (наприклад, у R2 Dashboard).",
-                    MINIO_BUCKET,
-                )
-        except Exception:
-            # Cloudflare R2 може не дозволяти ListBuckets → попереджаємо й працюємо далі.
-            logger.info("[MINIO] Неможливо перевірити існування bucket через API — продовжуємо всліпу.")
-
-        _minio_client = client
-        logger.info("[MINIO] Підключення до %s, bucket=%s готове", MINIO_ENDPOINT, MINIO_BUCKET)
-        return _minio_client
-    except S3Error as e:
-        logger.exception("[MINIO] Помилка роботи з MinIO: %s", e)
-        raise
-    except Exception as e:
-        logger.exception("[MINIO] Неочікувана помилка ініціалізації MinIO: %s", e)
-        raise
+    # Повертаємо dataclass (може містити більше полів, ніж БД — не проблема)
+    return Immobile(**d)
 
 
-# ---------------------------------------------------------------------------
-# DB helpers: завантаження/збереження visura + immobili
-# ---------------------------------------------------------------------------
-
-def load_immobiles_from_db(cf: str) -> List[Immobile]:
+def immobile_db_row(imm: Immobile) -> Dict[str, Any]:
     """
-    Завантажити всі Immobile для візури конкретного CF з таблиці `immobili`.
+    Формує dict ТІЛЬКИ з колонок таблиці public.immobili + робить нормалізацію.
 
-    SQL відповідає поточній схемі таблиці `immobili` і полям dataclass `Immobile`.
+    Важливо:
+    - sub завжди повертаємо як '' (не NULL), щоб коректно працював UNIQUE/ON CONFLICT.
+    - foglio/numero/інші строкові поля чистимо від пробілів/переносів.
+    - superficie_* приводимо до float або None.
     """
-    conn = None
-    try:
-        conn = _get_pg_connection()
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT
-                    -- базові поля таблиці (з візури)
-                    table_num_immobile,
-                    sez_urbana,
-                    foglio,
-                    numero,
-                    sub,
-                    zona_cens,
-                    micro_zona,
-                    categoria,
-                    classe,
-                    consistenza,
-                    superficie_totale,
-                    superficie_escluse,
-                    superficie_raw,
-                    rendita,
+    row: Dict[str, Any] = {}
 
-                    -- адреса з візури
-                    immobile_comune,
-                    immobile_comune_code,
-                    via_type,
-                    via_name,
-                    via_num,
-                    scala,
-                    interno,
-                    piano,
-                    indirizzo_raw,
-                    dati_ulteriori,
+    for col in IMMOBILI_DB_COLUMNS:
+        raw = getattr(imm, col, None)
 
-                    -- дані локатора з візури
-                    locatore_surname,
-                    locatore_name,
-                    locatore_codice_fiscale,
+        if col == "sub":
+            row[col] = clean_sub(raw)
+            continue
 
-                    -- OVERRIDE (реальна адреса об'єкта)
-                    immobile_comune_override,
-                    immobile_via_override,
-                    immobile_civico_override,
-                    immobile_piano_override,
-                    immobile_interno_override,
+        if col in ("superficie_totale", "superficie_escluse"):
+            row[col] = safe_float(raw)
+            continue
 
-                    -- адреса локатора (з YAML, збережена в БД)
-                    locatore_comune_res,
-                    locatore_via,
-                    locatore_civico,
+        # більшість текстових
+        row[col] = clean_str(raw)
 
-                    -- Елементи A/B/C/D
-                    a1, a2,
-                    b1, b2, b3, b4, b5,
-                    c1, c2, c3, c4, c5, c6, c7,
-                    d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13,
+    # Додатково: foglio/numero бажано завжди як текст (у БД колонки TEXT)
+    # Інакше можуть проскакувати 11 як int, що не страшно, але краще стабільно.
+    if row.get("foglio") is not None:
+        row["foglio"] = str(row["foglio"]).strip()
+    if row.get("numero") is not None:
+        row["numero"] = str(row["numero"]).strip()
 
-                    -- Підсумкові кількості
-                    a_cnt, b_cnt, c_cnt, d_cnt,
-
-                    -- Контрактні параметри (з YAML/БД)
-                    contract_kind,
-                    arredato,
-                    energy_class,
-                    canone_contrattuale_mensile,
-                    durata_anni
-                FROM immobili
-                WHERE visura_cf = %s
-                ORDER BY id;
-                """,
-                (cf,),
-            )
-            rows = cur.fetchall()
-    except Exception as e:
-        logger.exception("[DB] Не вдалося прочитати immobili для %s: %s", cf, e)
-        return []
-    finally:
-        if conn is not None:
-            conn.close()
-
-    immobiles: List[Immobile] = []
-    for row in rows:
-        (
-            table_num_immobile,
-            sez_urbana,
-            foglio,
-            numero,
-            sub,
-            zona_cens,
-            micro_zona,
-            categoria,
-            classe,
-            consistenza,
-            superficie_totale,
-            superficie_escluse,
-            superficie_raw,
-            rendita,
-            immobile_comune,
-            immobile_comune_code,
-            via_type,
-            via_name,
-            via_num,
-            scala,
-            interno,
-            piano,
-            indirizzo_raw,
-            dati_ulteriori,
-            locatore_surname,
-            locatore_name,
-            locatore_codice_fiscale,
-            immobile_comune_override,
-            immobile_via_override,
-            immobile_civico_override,
-            immobile_piano_override,
-            immobile_interno_override,
-            locatore_comune_res,
-            locatore_via,
-            locatore_civico,
-            a1, a2,
-            b1, b2, b3, b4, b5,
-            c1, c2, c3, c4, c5, c6, c7,
-            d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13,
-            a_cnt, b_cnt, c_cnt, d_cnt,
-            contract_kind,
-            arredato,
-            energy_class,
-            canone_contrattuale_mensile,
-            durata_anni,
-        ) = row
-
-        immobiles.append(
-            Immobile(
-                table_num_immobile=table_num_immobile,
-                sez_urbana=sez_urbana,
-                foglio=foglio,
-                numero=numero,
-                sub=sub,
-                zona_cens=zona_cens,
-                micro_zona=micro_zona,
-                categoria=categoria,
-                classe=classe,
-                consistenza=consistenza,
-                superficie_totale=superficie_totale,
-                superficie_escluse=superficie_escluse,
-                superficie_raw=superficie_raw,
-                rendita=rendita,
-                immobile_comune=immobile_comune,
-                immobile_comune_code=immobile_comune_code,
-                via_type=via_type,
-                via_name=via_name,
-                via_num=via_num,
-                scala=scala,
-                interno=interno,
-                piano=piano,
-                indirizzo_raw=indirizzo_raw,
-                dati_ulteriori=dati_ulteriori,
-                locatore_surname=locatore_surname,
-                locatore_name=locatore_name,
-                locatore_codice_fiscale=locatore_codice_fiscale,
-                immobile_comune_override=immobile_comune_override,
-                immobile_via_override=immobile_via_override,
-                immobile_civico_override=immobile_civico_override,
-                immobile_piano_override=immobile_piano_override,
-                immobile_interno_override=immobile_interno_override,
-                locatore_comune_res=locatore_comune_res,
-                locatore_via=locatore_via,
-                locatore_civico=locatore_civico,
-                a1=a1,
-                a2=a2,
-                b1=b1,
-                b2=b2,
-                b3=b3,
-                b4=b4,
-                b5=b5,
-                c1=c1,
-                c2=c2,
-                c3=c3,
-                c4=c4,
-                c5=c5,
-                c6=c6,
-                c7=c7,
-                d1=d1,
-                d2=d2,
-                d3=d3,
-                d4=d4,
-                d5=d5,
-                d6=d6,
-                d7=d7,
-                d8=d8,
-                d9=d9,
-                d10=d10,
-                d11=d11,
-                d12=d12,
-                d13=d13,
-                a_cnt=a_cnt,
-                b_cnt=b_cnt,
-                c_cnt=c_cnt,
-                d_cnt=d_cnt,
-                contract_kind=contract_kind,
-                arredato=arredato,
-                energy_class=energy_class,
-                canone_contrattuale_mensile=canone_contrattuale_mensile,
-                durata_anni=durata_anni,
-            )
-        )
-
-    logger.debug("[DB] Завантажено %d immobili для %s", len(immobiles), cf)
-    return immobiles
+    return row
 
 
-def save_visura(cf: str, immobiles: List[Immobile], pdf_path: Path) -> None:
+def find_local_visura_pdf(cf: str, adapter: ItemAdapter) -> Optional[Path]:
     """
-    Зберігає:
-    - PDF-візуру в MinIO (visure/<cf>.pdf),
-    - метадані в таблиці visure,
-    - усі immobili в таблиці immobili.
-
-    Після успішного запису локальний PDF видаляється.
-
-    при FORCE_UPDATE_VISURA старі override-и, A/B/C/D, адреса локатора та
-    контрактні поля НЕ губляться — підтягуємо їх зі старих записів.
+    Знаходимо PDF для парсингу/аплоаду:
+      1) visura_download_path з item
+      2) downloads/<cf>/VISURA_<cf>.pdf
+      3) latest DOC_*.pdf у каталозі клієнта
     """
-    object_name = f"visure/{cf}.pdf"
+    p = clean_str(adapter.get("visura_download_path"))
+    if p:
+        path = Path(p)
+        if path.exists():
+            return path
 
-    # 1. Заливаємо PDF у MinIO
-    try:
-        client = _get_minio_client()
-        logger.info(
-            "[MINIO] Завантажуємо PDF візури для %s у bucket=%s, object=%s",
-            cf,
-            MINIO_BUCKET,
-            object_name,
-        )
-        client.fput_object(
-            bucket_name=MINIO_BUCKET,
-            object_name=object_name,
-            file_path=str(pdf_path),
-            content_type="application/pdf",
-        )
-    except S3Error as e:
-        logger.exception("[MINIO] Помилка при завантаженні PDF для %s: %s", cf, e)
-        raise
-    except Exception as e:
-        logger.exception("[MINIO] Неочікувана помилка при завантаженні PDF для %s: %s", cf, e)
-        raise
+    fallback = get_visura_path(cf)
+    if fallback.exists():
+        return fallback
 
-    conn = None
-    try:
-        conn = _get_pg_connection()
-        with conn:
-            with conn.cursor() as cur:
-                # 0. Зчитуємо старі override-и, адресу локатора, A/B/C/D та контрактні поля
-                cur.execute(
-                    """
-                    SELECT
-                        foglio,
-                        numero,
-                        sub,
-                        immobile_comune_override,
-                        immobile_via_override,
-                        immobile_civico_override,
-                        immobile_piano_override,
-                        immobile_interno_override,
-                        locatore_comune_res,
-                        locatore_via,
-                        locatore_civico,
-                        a1, a2,
-                        b1, b2, b3, b4, b5,
-                        c1, c2, c3, c4, c5, c6, c7,
-                        d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13,
-                        a_cnt, b_cnt, c_cnt, d_cnt,
-                        contract_kind,
-                        arredato,
-                        energy_class,
-                        canone_contrattuale_mensile,
-                        durata_anni
-                    FROM immobili
-                    WHERE visura_cf = %s;
-                    """,
-                    (cf,),
-                )
-                old_rows = cur.fetchall()
-                old_map: dict[tuple[str, str, str], dict[str, Any]] = {}
+    client_dir = get_client_dir(cf)
+    candidates = sorted(client_dir.glob("DOC_*.pdf"), key=lambda x: x.stat().st_mtime, reverse=True)
+    if candidates:
+        return candidates[0]
 
-                for (
-                    foglio,
-                    numero,
-                    sub,
-                    immobile_com_override,
-                    immobile_via_override,
-                    immobile_civico_override,
-                    immobile_piano_override,
-                    immobile_interno_override,
-                    locatore_comune_res,
-                    locatore_via,
-                    locatore_civico,
-                    a1, a2,
-                    b1, b2, b3, b4, b5,
-                    c1, c2, c3, c4, c5, c6, c7,
-                    d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13,
-                    a_cnt, b_cnt, c_cnt, d_cnt,
-                    contract_kind,
-                    arredato,
-                    energy_class,
-                    canone_contrattuale_mensile,
-                    durata_anni,
-                ) in old_rows:
-                    key = (
-                        str(foglio) if foglio is not None else "",
-                        str(numero) if numero is not None else "",
-                        str(sub) if sub is not None else "",
-                    )
-                    old_map[key] = {
-                        "immobile_comune_override": immobile_com_override,
-                        "immobile_via_override": immobile_via_override,
-                        "immobile_civico_override": immobile_civico_override,
-                        "immobile_piano_override": immobile_piano_override,
-                        "immobile_interno_override": immobile_interno_override,
-                        "locatore_comune_res": locatore_comune_res,
-                        "locatore_via": locatore_via,
-                        "locatore_civico": locatore_civico,
-                        "a1": a1,
-                        "a2": a2,
-                        "b1": b1,
-                        "b2": b2,
-                        "b3": b3,
-                        "b4": b4,
-                        "b5": b5,
-                        "c1": c1,
-                        "c2": c2,
-                        "c3": c3,
-                        "c4": c4,
-                        "c5": c5,
-                        "c6": c6,
-                        "c7": c7,
-                        "d1": d1,
-                        "d2": d2,
-                        "d3": d3,
-                        "d4": d4,
-                        "d5": d5,
-                        "d6": d6,
-                        "d7": d7,
-                        "d8": d8,
-                        "d9": d9,
-                        "d10": d10,
-                        "d11": d11,
-                        "d12": d12,
-                        "d13": d13,
-                        "a_cnt": a_cnt,
-                        "b_cnt": b_cnt,
-                        "c_cnt": c_cnt,
-                        "d_cnt": d_cnt,
-                        "contract_kind": contract_kind,
-                        "arredato": arredato,
-                        "energy_class": energy_class,
-                        "canone_contrattuale_mensile": canone_contrattuale_mensile,
-                        "durata_anni": durata_anni,
-                    }
+    # інколи spider качає просто *.pdf
+    any_pdf = sorted(client_dir.glob("*.pdf"), key=lambda x: x.stat().st_mtime, reverse=True)
+    if any_pdf:
+        return any_pdf[0]
 
-                # 1. upsert у visure (метадані PDF)
-                cur.execute(
-                    """
-                    INSERT INTO visure (cf, pdf_bucket, pdf_object, updated_at)
-                    VALUES (%s, %s, %s, now())
-                    ON CONFLICT (cf) DO UPDATE
-                    SET pdf_bucket = EXCLUDED.pdf_bucket,
-                        pdf_object = EXCLUDED.pdf_object,
-                        updated_at = EXCLUDED.updated_at;
-                    """,
-                    (cf, MINIO_BUCKET, object_name),
-                )
-
-                # 2. чистимо старі immobili для цього cf
-                cur.execute("DELETE FROM immobili WHERE visura_cf = %s;", (cf,))
-
-                insert_sql = """
-                    INSERT INTO immobili (
-                        visura_cf,
-                        table_num_immobile,
-                        sez_urbana,
-                        foglio,
-                        numero,
-                        sub,
-                        zona_cens,
-                        micro_zona,
-                        categoria,
-                        classe,
-                        consistenza,
-                        superficie_totale,
-                        superficie_escluse,
-                        superficie_raw,
-                        rendita,
-                        immobile_comune,
-                        immobile_comune_code,
-                        via_type,
-                        via_name,
-                        via_num,
-                        scala,
-                        interno,
-                        piano,
-                        indirizzo_raw,
-                        dati_ulteriori,
-                        locatore_surname,
-                        locatore_name,
-                        locatore_codice_fiscale,
-                        immobile_comune_override,
-                        immobile_via_override,
-                        immobile_civico_override,
-                        immobile_piano_override,
-                        immobile_interno_override,
-                        locatore_comune_res,
-                        locatore_via,
-                        locatore_civico,
-                        a1, a2,
-                        b1, b2, b3, b4, b5,
-                        c1, c2, c3, c4, c5, c6, c7,
-                        d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13,
-                        a_cnt, b_cnt, c_cnt, d_cnt,
-                        contract_kind,
-                        arredato,
-                        energy_class,
-                        canone_contrattuale_mensile,
-                        durata_anni
-                    ) VALUES (
-                        %s,  -- visura_cf
-                        %s,  -- table_num_immobile
-                        %s,  -- sez_urbana
-                        %s,  -- foglio
-                        %s,  -- numero
-                        %s,  -- sub
-                        %s,  -- zona_cens
-                        %s,  -- micro_zona
-                        %s,  -- categoria
-                        %s,  -- classe
-                        %s,  -- consistenza
-                        %s,  -- superficie_totale
-                        %s,  -- superficie_escluse
-                        %s,  -- superficie_raw
-                        %s,  -- rendita
-                        %s,  -- immobile_comune
-                        %s,  -- immobile_comune_code
-                        %s,  -- via_type
-                        %s,  -- via_name
-                        %s,  -- via_num
-                        %s,  -- scala
-                        %s,  -- interno
-                        %s,  -- piano
-                        %s,  -- indirizzo_raw
-                        %s,  -- dati_ulteriori
-                        %s,  -- locatore_surname
-                        %s,  -- locatore_name
-                        %s,  -- locatore_codice_fiscale
-                        %s,  -- immobile_comune_override
-                        %s,  -- immobile_via_override
-                        %s,  -- immobile_civico_override
-                        %s,  -- immobile_piano_override
-                        %s,  -- immobile_interno_override
-                        %s,  -- locatore_comune_res
-                        %s,  -- locatore_via
-                        %s,  -- locatore_civico
-                        %s,  -- a1
-                        %s,  -- a2
-                        %s,  -- b1
-                        %s,  -- b2
-                        %s,  -- b3
-                        %s,  -- b4
-                        %s,  -- b5
-                        %s,  -- c1
-                        %s,  -- c2
-                        %s,  -- c3
-                        %s,  -- c4
-                        %s,  -- c5
-                        %s,  -- c6
-                        %s,  -- c7
-                        %s,  -- d1
-                        %s,  -- d2
-                        %s,  -- d3
-                        %s,  -- d4
-                        %s,  -- d5
-                        %s,  -- d6
-                        %s,  -- d7
-                        %s,  -- d8
-                        %s,  -- d9
-                        %s,  -- d10
-                        %s,  -- d11
-                        %s,  -- d12
-                        %s,  -- d13
-                        %s,  -- a_cnt
-                        %s,  -- b_cnt
-                        %s,  -- c_cnt
-                        %s,  -- d_cnt
-                        %s,  -- contract_kind
-                        %s,  -- arredato
-                        %s,  -- energy_class
-                        %s,  -- canone_contrattuale_mensile
-                        %s   -- durata_anni
-                    );
-                """
-
-                for imm in immobiles:
-                    # Підтягуємо старі override-и, A/B/C/D, адресу локатора і контрактні поля, якщо вони були
-                    key = (
-                        str(getattr(imm, "foglio", "") or ""),
-                        str(getattr(imm, "numero", "") or ""),
-                        str(getattr(imm, "sub", "") or ""),
-                    )
-                    old = old_map.get(key)
-                    if old:
-                        for field in (
-                            "immobile_comune_override",
-                            "immobile_via_override",
-                            "immobile_civico_override",
-                            "immobile_piano_override",
-                            "immobile_interno_override",
-                            "locatore_comune_res",
-                            "locatore_via",
-                            "locatore_civico",
-                            "a1", "a2",
-                            "b1", "b2", "b3", "b4", "b5",
-                            "c1", "c2", "c3", "c4", "c5", "c6", "c7",
-                            "d1", "d2", "d3", "d4", "d5", "d6", "d7",
-                            "d8", "d9", "d10", "d11", "d12", "d13",
-                            "a_cnt", "b_cnt", "c_cnt", "d_cnt",
-                            "contract_kind",
-                            "arredato",
-                            "energy_class",
-                            "canone_contrattuale_mensile",
-                            "durata_anni",
-                        ):
-                            current_val = getattr(imm, field, None)
-                            if current_val in (None, "") and old.get(field) is not None:
-                                setattr(imm, field, old[field])
-
-                    cur.execute(
-                        insert_sql,
-                        (
-                            cf,
-                            getattr(imm, "table_num_immobile", None),
-                            getattr(imm, "sez_urbana", None),
-                            getattr(imm, "foglio", None),
-                            getattr(imm, "numero", None),
-                            getattr(imm, "sub", None),
-                            getattr(imm, "zona_cens", None),
-                            getattr(imm, "micro_zona", None),
-                            getattr(imm, "categoria", None),
-                            getattr(imm, "classe", None),
-                            getattr(imm, "consistenza", None),
-                            getattr(imm, "superficie_totale", None),
-                            getattr(imm, "superficie_escluse", None),
-                            getattr(imm, "superficie_raw", None),
-                            getattr(imm, "rendita", None),
-                            getattr(imm, "immobile_comune", None),
-                            getattr(imm, "immobile_comune_code", None),
-                            getattr(imm, "via_type", None),
-                            getattr(imm, "via_name", None),
-                            getattr(imm, "via_num", None),
-                            getattr(imm, "scala", None),
-                            getattr(imm, "interno", None),
-                            getattr(imm, "piano", None),
-                            getattr(imm, "indirizzo_raw", None),
-                            getattr(imm, "dati_ulteriori", None),
-                            getattr(imm, "locatore_surname", None),
-                            getattr(imm, "locatore_name", None),
-                            getattr(imm, "locatore_codice_fiscale", None),
-                            getattr(imm, "immobile_comune_override", None),
-                            getattr(imm, "immobile_via_override", None),
-                            getattr(imm, "immobile_civico_override", None),
-                            getattr(imm, "immobile_piano_override", None),
-                            getattr(imm, "immobile_interno_override", None),
-                            getattr(imm, "locatore_comune_res", None),
-                            getattr(imm, "locatore_via", None),
-                            getattr(imm, "locatore_civico", None),
-                            getattr(imm, "a1", None),
-                            getattr(imm, "a2", None),
-                            getattr(imm, "b1", None),
-                            getattr(imm, "b2", None),
-                            getattr(imm, "b3", None),
-                            getattr(imm, "b4", None),
-                            getattr(imm, "b5", None),
-                            getattr(imm, "c1", None),
-                            getattr(imm, "c2", None),
-                            getattr(imm, "c3", None),
-                            getattr(imm, "c4", None),
-                            getattr(imm, "c5", None),
-                            getattr(imm, "c6", None),
-                            getattr(imm, "c7", None),
-                            getattr(imm, "d1", None),
-                            getattr(imm, "d2", None),
-                            getattr(imm, "d3", None),
-                            getattr(imm, "d4", None),
-                            getattr(imm, "d5", None),
-                            getattr(imm, "d6", None),
-                            getattr(imm, "d7", None),
-                            getattr(imm, "d8", None),
-                            getattr(imm, "d9", None),
-                            getattr(imm, "d10", None),
-                            getattr(imm, "d11", None),
-                            getattr(imm, "d12", None),
-                            getattr(imm, "d13", None),
-                            getattr(imm, "a_cnt", None),
-                            getattr(imm, "b_cnt", None),
-                            getattr(imm, "c_cnt", None),
-                            getattr(imm, "d_cnt", None),
-                            getattr(imm, "contract_kind", None),
-                            getattr(imm, "arredato", None),
-                            getattr(imm, "energy_class", None),
-                            getattr(imm, "canone_contrattuale_mensile", None),
-                            getattr(imm, "durata_anni", None),
-                        ),
-                    )
-
-        logger.info(
-            "[DB] Збережено visura + %d immobili для %s (PDF: %s/%s)",
-            len(immobiles),
-            cf,
-            MINIO_BUCKET,
-            object_name,
-        )
-    except Exception as e:
-        logger.exception("[DB] Помилка при збереженні visura для %s: %s", cf, e)
-        raise
-    finally:
-        if conn is not None:
-            conn.close()
-        try:
-            pdf_path.unlink()
-            logger.debug("[PIPELINE] Локальний PDF видалено: %s", pdf_path)
-        except FileNotFoundError:
-            logger.debug("[PIPELINE] Локальний PDF вже відсутній: %s", pdf_path)
-        except Exception as e:
-            logger.warning("[PIPELINE] Не вдалося видалити локальний PDF %s: %s", pdf_path, e)
-
-
-# ---------------------------------------------------------------------------
-# YAML helpers / upserts
-# ---------------------------------------------------------------------------
-
-def _clean_str(value: Any) -> str | None:
-    """
-    Приводить до рядка й відкидає "порожні" значення.
-
-    None       -> None
-    "" / "  "  -> None
-    інше       -> stripped str(...)
-    """
-    if value is None:
-        return None
-    s = str(value).strip()
-    return s or None
-
-
-def _to_bool_or_none(value: Any) -> bool | None:
-    """
-    Акуратне приведення до bool:
-
-    - None / ""      -> None
-    - bool           -> як є
-    - 0 / 1          -> False / True
-    - "true"/"yes"/"1" (регістр не важливий)  -> True
-    - "false"/"no"/"0" -> False
-    - інше           -> None (лог не ламаємо)
-    """
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-
-    s = str(value).strip().lower()
-    if s in ("true", "yes", "y", "1"):
-        return True
-    if s in ("false", "no", "n", "0"):
-        return False
     return None
 
 
-def upsert_overrides_from_yaml(cf: str, adapter: ItemAdapter) -> None:
+def filter_immobiles_by_yaml(immobiles: List[Tuple[int, Immobile]], adapter: ItemAdapter) -> List[Tuple[int, Immobile]]:
     """
-    Оновлює в таблиці `immobili`:
-    - реальну адресу об'єкта (immobile_*_override) — ТІЛЬКИ для конкретного immobile;
-    - адресу локатора (locatore_*) — ДЛЯ ВСІХ immobili з цим CF.
-
-    Логіка:
-    1) якщо в YAML немає жодного IMMOBILE_* і жодного LOCATORE_* → нічого не робимо;
-    2) якщо є IMMOBILE_*:
-         - якщо у CF кілька immobili і немає FOGLIO/NUMERO/SUB → не оновлюємо override-адресу;
-         - інакше оновлюємо ті рядки, що відповідають ключу (foglio/numero/sub);
-    3) якщо є LOCATORE_*:
-         - оновлюємо locatore_* для ВСІХ рядків visura_cf = cf.
+    Фільтр об'єктів по YAML критеріям.
     """
+    foglio_f = clean_str(adapter.get("foglio"))
+    numero_f = clean_str(adapter.get("numero"))
+    sub_f = clean_str(adapter.get("sub"))
+    categoria_f = clean_str(adapter.get("categoria"))
+    rendita_f = clean_str(adapter.get("rendita"))
+    superficie_f = safe_float(adapter.get("superficie_totale"))
 
-    # --- нормалізація YAML-значень ---
-    immobile_comune = _clean_str(adapter.get("immobile_comune"))
-    immobile_via = _clean_str(adapter.get("immobile_via"))
-    immobile_civico = _clean_str(adapter.get("immobile_civico"))
-    immobile_piano = _clean_str(adapter.get("immobile_piano"))
-    immobile_interno = _clean_str(adapter.get("immobile_interno"))
+    out: List[Tuple[int, Immobile]] = []
+    for imm_id, imm in immobiles:
+        if foglio_f and str(getattr(imm, "foglio", "") or "") != foglio_f:
+            continue
+        if numero_f and str(getattr(imm, "numero", "") or "") != numero_f:
+            continue
+        if sub_f and str(getattr(imm, "sub", "") or "") != sub_f:
+            continue
+        if categoria_f and str(getattr(imm, "categoria", "") or "") != categoria_f:
+            continue
+        if rendita_f and str(getattr(imm, "rendita", "") or "") != rendita_f:
+            continue
+        if superficie_f is not None:
+            st = getattr(imm, "superficie_totale", None)
+            if st is not None:
+                try:
+                    if float(st) != float(superficie_f):
+                        continue
+                except Exception:
+                    pass
+        out.append((imm_id, imm))
+        logger.info(f"[PIPELINE] Immobile ID={imm_id} пройшов фільтр YAML. {out}")
+    return out
 
-    locatore_comune_res = _clean_str(adapter.get("locatore_comune_res"))
-    locatore_via = _clean_str(adapter.get("locatore_via"))
-    locatore_civico = _clean_str(adapter.get("locatore_civico"))
 
-    any_obj_override = any(
-        v is not None
-        for v in (
-            immobile_comune,
-            immobile_via,
-            immobile_civico,
-            immobile_piano,
-            immobile_interno,
+# ============================================================================
+# DB operations (в pipeline, але конекшн — у uppi/domain/db.py)
+# ============================================================================
+
+def db_upsert_person(conn, cf: str, surname: Optional[str], name: Optional[str]) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO public.persons (cf, surname, name)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (cf) DO UPDATE
+            SET
+              surname = COALESCE(EXCLUDED.surname, persons.surname),
+              name    = COALESCE(EXCLUDED.name, persons.name);
+            """,
+            (cf, surname, name),
         )
-    )
-    any_locatore = any(
-        v is not None for v in (locatore_comune_res, locatore_via, locatore_civico)
-    )
-
-    # Немає жодних даних для оновлення
-    if not any_obj_override and not any_locatore:
-        return
-
-    conn = None
-    try:
-        conn = _get_pg_connection()
-        with conn:
-            with conn.cursor() as cur:
-                # Дивимось, скільки immobili є для цього CF
-                cur.execute(
-                    """
-                    SELECT id, foglio, numero, sub
-                    FROM immobili
-                    WHERE visura_cf = %s;
-                    """,
-                    (cf,),
-                )
-                rows = cur.fetchall()
-
-                if not rows:
-                    logger.warning(
-                        "[DB] upsert_overrides_from_yaml: для %s немає записів у immobili "
-                        "(visura ще не збережена?)",
-                        cf,
-                    )
-                    return
-
-                # -----------------------------
-                # 1) OVERRIDE РЕАЛЬНОЇ АДРЕСИ ОБ'ЄКТА
-                # -----------------------------
-                if any_obj_override:
-                    foglio = _clean_str(adapter.get("foglio"))
-                    numero = _clean_str(adapter.get("numero"))
-                    sub = _clean_str(adapter.get("sub"))
-
-                    where_clauses = ["visura_cf = %s"]
-                    where_params: List[Any] = [cf]
-
-                    if foglio is not None:
-                        where_clauses.append("foglio = %s")
-                        where_params.append(foglio)
-                    if numero is not None:
-                        where_clauses.append("numero = %s")
-                        where_params.append(numero)
-                    if sub is not None:
-                        where_clauses.append("sub = %s")
-                        where_params.append(sub)
-
-                    # Немає FOGLIO/NUMERO/SUB, але кілька об'єктів — не знаємо, який оновлювати
-                    if len(where_clauses) == 1 and len(rows) > 1:
-                        logger.warning(
-                            "[DB] upsert_overrides_from_yaml: для %s є %d immobili, "
-                            "але FOGLIO/NUMERO/SUB у YAML не задані — "
-                            "пропускаємо оновлення реальної адреси об'єкта, "
-                            "щоб не присвоїти одну адресу всім об'єктам.",
-                            cf,
-                            len(rows),
-                        )
-                    else:
-                        sql_obj = f"""
-                            UPDATE immobili
-                            SET
-                                immobile_comune_override  = COALESCE(%s, immobile_comune_override),
-                                immobile_via_override     = COALESCE(%s, immobile_via_override),
-                                immobile_civico_override  = COALESCE(%s, immobile_civico_override),
-                                immobile_piano_override   = COALESCE(%s, immobile_piano_override),
-                                immobile_interno_override = COALESCE(%s, immobile_interno_override)
-                            WHERE {" AND ".join(where_clauses)};
-                        """
-                        params_obj: List[Any] = [
-                            immobile_comune,
-                            immobile_via,
-                            immobile_civico,
-                            immobile_piano,
-                            immobile_interno,
-                            *where_params,
-                        ]
-                        cur.execute(sql_obj, params_obj)
-                        logger.debug(
-                            "[DB] upsert_overrides_from_yaml: для %s оновлено override-адресу об'єкта (%d рядків)",
-                            cf,
-                            cur.rowcount,
-                        )
-
-                # -----------------------------
-                # 2) АДРЕСА ЛОКАТОРА ДЛЯ ВСІХ IMMOBILI ЦЬОГО CF
-                # -----------------------------
-                if any_locatore:
-                    sql_loc = """
-                        UPDATE immobili
-                        SET
-                            locatore_comune_res = COALESCE(%s, locatore_comune_res),
-                            locatore_via        = COALESCE(%s, locatore_via),
-                            locatore_civico     = COALESCE(%s, locatore_civico)
-                        WHERE visura_cf = %s;
-                    """
-                    cur.execute(
-                        sql_loc,
-                        [locatore_comune_res, locatore_via, locatore_civico, cf],
-                    )
-                    logger.debug(
-                        "[DB] upsert_overrides_from_yaml: для %s оновлено адресу локатора (%d рядків)",
-                        cf,
-                        cur.rowcount,
-                    )
-
-    except Exception as e:
-        logger.exception("[DB] Помилка в upsert_overrides_from_yaml(%s): %s", cf, e)
-    finally:
-        if conn is not None:
-            conn.close()
 
 
-def upsert_elements_from_yaml(cf: str, adapter: ItemAdapter) -> None:
-    """
-    Оновлює в таблиці `immobili` поля A1..D13 і підсумкові A_CNT..D_CNT для заданого CF.
-
-    Логіка:
-    - значення з YAML → записуються в БД;
-    - якщо замість значення передано "-" → відповідне поле в БД очищується (NULL);
-    - якщо значення в YAML немає (ключ відсутній або порожній рядок) → БД не чіпаємо;
-    - після оновлення A/B/C/D перераховуємо A_CNT..D_CNT на основі не-NULL полів.
-
-    Якщо для CF кілька immobili і в YAML немає FOGLIO/NUMERO/SUB —
-    нічого не оновлюємо (щоб не розмазувати одну конфігурацію по всіх об'єктах).
-    """
-    # Ключі елементів
-    element_keys = [
-        "a1", "a2",
-        "b1", "b2", "b3", "b4", "b5",
-        "c1", "c2", "c3", "c4", "c5", "c6", "c7",
-        "d1", "d2", "d3", "d4", "d5", "d6",
-        "d7", "d8", "d9", "d10", "d11", "d12", "d13",
-    ]
-
-    # Збираємо зміни з YAML
-    pending: dict[str, tuple[str, str | None]] = {}  # key -> ("set"/"clear", value)
-
-    for key in element_keys:
-        raw = adapter.get(key)
-        if raw is None:
-            continue
-
-        if isinstance(raw, str):
-            val = raw.strip()
-        else:
-            val = str(raw).strip()
-
-        if val == "":
-            # Порожнє → вважаємо "немає оновлення"
-            continue
-
-        if val == "-":
-            # Спеціальний випадок: видалення елемента з БД
-            pending[key] = ("clear", None)
-        else:
-            # Будь-яке непорожнє значення → зберігаємо як є (YAML має пріоритет)
-            pending[key] = ("set", val)
-
-    if not pending:
-        # У YAML немає жодних A/B/C/D → нічого не робимо
-        return
-
-    conn = None
-    try:
-        conn = _get_pg_connection()
-        with conn:
-            with conn.cursor() as cur:
-                # Дивимось, скільки immobili є для цього CF
-                cur.execute(
-                    """
-                    SELECT id, foglio, numero, sub
-                    FROM immobili
-                    WHERE visura_cf = %s;
-                    """,
-                    (cf,),
-                )
-                rows = cur.fetchall()
-
-                if not rows:
-                    logger.warning(
-                        "[DB] upsert_elements_from_yaml: для %s немає записів у immobili "
-                        "(visура ще не збережена?)",
-                        cf,
-                    )
-                    return
-
-                foglio = _clean_str(adapter.get("foglio"))
-                numero = _clean_str(adapter.get("numero"))
-                sub = _clean_str(adapter.get("sub"))
-
-                where_clauses = ["visura_cf = %s"]
-                where_params: List[Any] = [cf]
-
-                if foglio is not None:
-                    where_clauses.append("foglio = %s")
-                    where_params.append(foglio)
-                if numero is not None:
-                    where_clauses.append("numero = %s")
-                    where_params.append(numero)
-                if sub is not None:
-                    where_clauses.append("sub = %s")
-                    where_params.append(sub)
-
-                # Якщо є кілька об'єктів і немає foglio/numero/sub — не знаємо, що оновлювати
-                if len(where_clauses) == 1 and len(rows) > 1:
-                    logger.warning(
-                        "[DB] upsert_elements_from_yaml: для %s є %d immobili, "
-                        "але FOGLIO/NUMERO/SUB у YAML не задані — "
-                        "пропускаємо оновлення A/B/C/D, "
-                        "щоб не застосувати один набір елементів до всіх об'єктів.",
-                        cf,
-                        len(rows),
-                    )
-                    return
-
-                # Будуємо SET-частину
-                set_clauses: List[str] = []
-                set_params: List[Any] = []
-
-                for col, (action, value) in pending.items():
-                    col_name = col  # у БД ті ж імена
-
-                    if action == "clear":
-                        set_clauses.append(f"{col_name} = NULL")
-                    else:
-                        set_clauses.append(f"{col_name} = %s")
-                        set_params.append(value)
-
-                if not set_clauses:
-                    return
-
-                sql_update_elements = f"""
-                    UPDATE immobili
-                    SET {', '.join(set_clauses)}
-                    WHERE {" AND ".join(where_clauses)};
+def db_upsert_visura(conn, cf: str, pdf_bucket: str, pdf_object: str, checksum_sha256: Optional[str], fetched_now: bool) -> None:
+    with conn.cursor() as cur:
+        if fetched_now:
+            cur.execute(
                 """
-                params = set_params + where_params
-                cur.execute(sql_update_elements, params)
-                logger.debug(
-                    "[DB] upsert_elements_from_yaml: для %s оновлено A/B/C/D (%d рядків)",
-                    cf,
-                    cur.rowcount,
-                )
-
-                # Перераховуємо A_CNT..D_CNT для всіх immobili цього CF
-                cur.execute(
-                    """
-                    UPDATE immobili
-                    SET
-                        a_cnt = (
-                            CASE WHEN a1 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN a2 IS NOT NULL THEN 1 ELSE 0 END
-                        ),
-                        b_cnt = (
-                            CASE WHEN b1 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN b2 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN b3 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN b4 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN b5 IS NOT NULL THEN 1 ELSE 0 END
-                        ),
-                        c_cnt = (
-                            CASE WHEN c1 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN c2 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN c3 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN c4 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN c5 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN c6 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN c7 IS NOT NULL THEN 1 ELSE 0 END
-                        ),
-                        d_cnt = (
-                            CASE WHEN d1 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN d2 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN d3 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN d4 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN d5 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN d6 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN d7 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN d8 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN d9 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN d10 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN d11 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN d12 IS NOT NULL THEN 1 ELSE 0 END +
-                            CASE WHEN d13 IS NOT NULL THEN 1 ELSE 0 END
-                        )
-                    WHERE visura_cf = %s;
-                    """,
-                    (cf,),
-                )
-                logger.debug(
-                    "[DB] upsert_elements_from_yaml: для %s перераховано A_CNT..D_CNT (%d рядків)",
-                    cf,
-                    cur.rowcount,
-                )
-
-    except Exception as e:
-        logger.exception("[DB] Помилка в upsert_elements_from_yaml(%s): %s", cf, e)
-    finally:
-        if conn is not None:
-            conn.close()
-
-
-def upsert_contract_from_yaml(cf: str, adapter: ItemAdapter) -> None:
-    """
-    Оновлює контрактні поля в таблиці `immobili` для заданого CF:
-
-        contract_kind                  (TEXT)
-        arredato                       (BOOLEAN)
-        energy_class                   (TEXT)
-        canone_contrattuale_mensile    (NUMERIC)
-        durata_anni                    (INTEGER)
-
-    Логіка:
-    - YAML має пріоритет над БД: якщо значення задане в YAML → воно записується;
-    - якщо значення в YAML немає (ключ відсутній або порожній) → відповідне поле НЕ чіпаємо;
-    - Якщо для CF кілька immobili і немає FOGLIO/NUMERO/SUB —
-      оновлення НЕ виконуємо (щоб не підписати одним контрактом всі об'єкти).
-    """
-    # Забираємо значення з adapter
-    raw_kind = _clean_str(adapter.get("contract_kind"))
-    raw_arredato = adapter.get("arredato")
-    raw_energy = _clean_str(adapter.get("energy_class"))
-    raw_canone = adapter.get("canone_contrattuale_mensile")
-    raw_durata = adapter.get("durata_anni")
-
-    contract_kind = raw_kind.upper() if raw_kind else None
-    arredato = _to_bool_or_none(raw_arredato)
-    energy_class = raw_energy.upper() if raw_energy else None
-
-    canone_contrattuale_mensile: float | None
-    if raw_canone in (None, ""):
-        canone_contrattuale_mensile = None
-    else:
-        try:
-            canone_contrattuale_mensile = float(raw_canone)
-        except (TypeError, ValueError):
-            logger.warning(
-                "[DB] upsert_contract_from_yaml: некоректне CANONE_CONTRATTUALE_MENSILE=%r — ігнорую",
-                raw_canone,
+                INSERT INTO public.visure (cf, pdf_bucket, pdf_object, checksum_sha256, fetched_at)
+                VALUES (%s, %s, %s, %s, now())
+                ON CONFLICT (cf) DO UPDATE
+                SET
+                  pdf_bucket      = EXCLUDED.pdf_bucket,
+                  pdf_object      = EXCLUDED.pdf_object,
+                  checksum_sha256 = COALESCE(EXCLUDED.checksum_sha256, visure.checksum_sha256),
+                  fetched_at      = now();
+                """,
+                (cf, pdf_bucket, pdf_object, checksum_sha256),
             )
-            canone_contrattuale_mensile = None
-
-    durata_anni: int | None
-    if raw_durata in (None, ""):
-        durata_anni = None
-    else:
-        try:
-            durata_anni = int(raw_durata)
-        except (TypeError, ValueError):
-            logger.warning(
-                "[DB] upsert_contract_from_yaml: некоректне DURATA_ANNI=%r — ігнорую",
-                raw_durata,
+        else:
+            cur.execute(
+                """
+                INSERT INTO public.visure (cf, pdf_bucket, pdf_object, checksum_sha256)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (cf) DO UPDATE
+                SET
+                  pdf_bucket      = EXCLUDED.pdf_bucket,
+                  pdf_object      = EXCLUDED.pdf_object,
+                  checksum_sha256 = COALESCE(EXCLUDED.checksum_sha256, visure.checksum_sha256);
+                """,
+                (cf, pdf_bucket, pdf_object, checksum_sha256),
             )
+
+
+def db_upsert_immobile(conn, visura_cf: str, imm: Immobile) -> int:
+    """
+    Upsert одного immobile в public.immobili і повернути його id.
+
+    Працює через ON CONFLICT на канонічному ключі:
+        (visura_cf, foglio, numero, sub)
+
+    Важливо:
+    - sub у схемі має бути NOT NULL DEFAULT '' (NULL -> ''), інакше ON CONFLICT
+      не буде матчитись.
+    - foglio та numero мають бути заповнені. Якщо їх нема, ми не можемо
+      стабільно ідентифікувати об'єкт => кидаємо ValueError.
+    """
+    row: Dict[str, Any] = immobile_db_row(imm)
+
+    # --- Нормалізація ключових полів для conflict target ---
+    # sub: унікальність тримаємо на '' замість NULL
+    sub = row.get("sub")
+    row["sub"] = (sub or "").strip()
+
+    foglio = (row.get("foglio") or "").strip()
+    numero = (row.get("numero") or "").strip()
+    row["foglio"] = foglio or None  # можна лишити як string; але якщо порожнє - None
+    row["numero"] = numero or None
+
+    if not foglio or not numero:
+        # Без foglio/numero ми не можемо гарантувати правильний upsert.
+        # Можна було б fallback-нути на INSERT без ON CONFLICT, але це створить сміття/дублікати.
+        raise ValueError(
+            f"Cannot upsert immobile without foglio+numero. "
+            f"Got foglio={foglio!r}, numero={numero!r}, sub={row['sub']!r}, visura_cf={visura_cf!r}"
+        )
+
+    # --- SQL parts ---
+    # Колонки, які вставляємо (visura_cf + всі поля з immobile_db_row)
+    cols = ["visura_cf"] + list(row.keys())
+    placeholders = ", ".join(["%s"] * len(cols))
+
+    # На конфлікті оновлюємо ВСІ поля з row (крім created_at/updated_at, якщо вони раптом там з'являться)
+    # updated_at у тебе і так оновлюється тригером BEFORE UPDATE.
+    update_keys = [k for k in row.keys() if k not in ("created_at", "updated_at")]
+    set_sql = ", ".join([f"{k} = EXCLUDED.{k}" for k in update_keys])
+
+    sql = f"""
+        INSERT INTO public.immobili ({", ".join(cols)})
+        VALUES ({placeholders})
+        ON CONFLICT (visura_cf, foglio, numero, sub)
+        DO UPDATE SET
+            {set_sql}
+        RETURNING id;
+    """
+
+    params = [visura_cf] + [row[k] for k in row.keys()]
+
+    try:
+        logger.debug("[DB] immobile key visura_cf=%s foglio=%r numero=%r sub=%r",
+             visura_cf, row.get("foglio"), row.get("numero"), row.get("sub"))
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rec = cur.fetchone()
+            if not rec:
+                raise RuntimeError("UPSERT immobile did not return id (unexpected).")
+            return int(rec[0])
+
+    except Psycopg2Error as e:
+        # rollback роби вище (у pipeline), але тут лог дає контекст
+        logger.exception(
+            "[DB] db_upsert_immobile failed visura_cf=%s foglio=%r numero=%r sub=%r: %s",
+            visura_cf,
+            foglio,
+            numero,
+            row.get("sub"),
+            e,
+        )
+        raise
+
+
+def db_prune_old_immobili_without_contracts(conn, visura_cf: str, keep_ids: List[int]) -> int:
+    if not PRUNE_OLD_IMMOBILI_WITHOUT_CONTRACTS:
+        return 0
+    if not keep_ids:
+        return 0
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            DELETE FROM public.immobili i
+            WHERE i.visura_cf=%s
+              AND NOT (i.id = ANY(%s))
+              AND NOT EXISTS (
+                SELECT 1 FROM public.contracts c WHERE c.immobile_id = i.id
+              );
+            """,
+            (visura_cf, keep_ids),
+        )
+        return cur.rowcount
+
+
+def db_load_immobili(conn, visura_cf: str) -> List[Tuple[int, Immobile]]:
+    with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(
+            """
+            SELECT
+              id,
+              table_num_immobile,
+              sez_urbana,
+              foglio,
+              numero,
+              sub,
+              zona_cens,
+              micro_zona,
+              categoria,
+              classe,
+              consistenza,
+              rendita,
+              superficie_totale,
+              superficie_escluse,
+              superficie_raw,
+              immobile_comune,
+              immobile_comune_code,
+              via_type,
+              via_name,
+              via_num,
+              scala,
+              interno,
+              piano,
+              indirizzo_raw,
+              dati_ulteriori
+            FROM public.immobili
+            WHERE visura_cf=%s
+            ORDER BY id;
+            """,
+            (visura_cf,),
+        )
+        rows = cur.fetchall()
+
+    out: List[Tuple[int, Immobile]] = []
+    for r in rows:
+        d = dict(r)
+        imm_id = int(d.pop("id"))
+        out.append((imm_id, Immobile(**d)))
+    return out
+
+
+def db_get_latest_contract_id(conn, immobile_id: int) -> Optional[str]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT contract_id
+            FROM public.contracts
+            WHERE immobile_id=%s
+            ORDER BY created_at DESC
+            LIMIT 1;
+            """,
+            (immobile_id,),
+        )
+        r = cur.fetchone()
+        return str(r[0]) if r else None
+
+
+def db_create_contract(conn, immobile_id: int) -> str:
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO public.contracts (immobile_id) VALUES (%s) RETURNING contract_id;", (immobile_id,))
+        return str(cur.fetchone()[0])
+
+
+def db_update_contract_fields(conn, contract_id: str, adapter: ItemAdapter) -> None:
+    contract_kind = clean_str(adapter.get("contract_kind"))
+    if contract_kind:
+        contract_kind = contract_kind.upper()
+
+    start_date = parse_date(adapter.get("decorrenza_data")) or parse_date(adapter.get("contratto_data"))
+    durata_anni = None
+    if clean_str(adapter.get("durata_anni")):
+        try:
+            durata_anni = int(str(adapter.get("durata_anni")))
+        except Exception:
             durata_anni = None
 
-    # Якщо в YAML немає жодного контрактного поля — нічого не оновлюємо
-    if (
-        contract_kind is None
-        and arredato is None
-        and energy_class is None
-        and canone_contrattuale_mensile is None
-        and durata_anni is None
-    ):
+    arredato = to_bool_or_none(adapter.get("arredato"))
+    energy_class = clean_str(adapter.get("energy_class"))
+    if energy_class:
+        energy_class = energy_class.upper()
+
+    canone_contr = safe_float(adapter.get("canone_contrattuale_mensile"))
+
+    updates: List[str] = []
+    params: List[Any] = []
+
+    def add(col: str, val: Any) -> None:
+        if val is None:
+            return
+        updates.append(f"{col}=%s")
+        params.append(val)
+
+    add("contract_kind", contract_kind)
+    add("start_date", start_date)
+    add("durata_anni", durata_anni)
+    add("arredato", arredato)
+    add("energy_class", energy_class)
+    add("canone_contrattuale_mensile", canone_contr)
+
+    if not updates:
         return
 
-    conn = None
-    try:
-        conn = _get_pg_connection()
-        with conn:
-            with conn.cursor() as cur:
-                # Дивимось, скільки immobili є для цього CF
+    params.append(contract_id)
+    with conn.cursor() as cur:
+        cur.execute(f"UPDATE public.contracts SET {', '.join(updates)} WHERE contract_id=%s;", params)
+
+
+def db_upsert_contract_parties(conn, contract_id: str, locatore_cf: str, conduttore_cf: Optional[str]) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO public.contract_parties (contract_id, role, person_cf)
+            VALUES (%s, 'LOCATORE', %s)
+            ON CONFLICT (contract_id, role) DO UPDATE
+            SET person_cf = EXCLUDED.person_cf;
+            """,
+            (contract_id, locatore_cf),
+        )
+
+        if conduttore_cf:
+            cur.execute(
+                """
+                INSERT INTO public.contract_parties (contract_id, role, person_cf)
+                VALUES (%s, 'CONDUTTORE', %s)
+                ON CONFLICT (contract_id, role) DO UPDATE
+                SET person_cf = EXCLUDED.person_cf;
+                """,
+                (contract_id, conduttore_cf),
+            )
+
+
+def db_upsert_contract_overrides(conn, contract_id: str, adapter: ItemAdapter) -> None:
+    """
+    Реальна адреса об'єкта і адреса locatore з YAML -> contract_overrides.
+    Оновлюємо тільки непорожні значення (щоб не затирати старі).
+    """
+    data = {
+        "immobile_comune_override": clean_str(adapter.get("immobile_comune")),
+        "immobile_via_override": clean_str(adapter.get("immobile_via")),
+        "immobile_civico_override": clean_str(adapter.get("immobile_civico")),
+        "immobile_piano_override": clean_str(adapter.get("immobile_piano")),
+        "immobile_interno_override": clean_str(adapter.get("immobile_interno")),
+        "locatore_comune_res": clean_str(adapter.get("locatore_comune_res")),
+        "locatore_via": clean_str(adapter.get("locatore_via")),
+        "locatore_civico": clean_str(adapter.get("locatore_civico")),
+    }
+
+    cols = [k for k, v in data.items() if v is not None]
+    if not cols:
+        return
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO public.contract_overrides (contract_id)
+            VALUES (%s)
+            ON CONFLICT (contract_id) DO NOTHING;
+            """,
+            (contract_id,),
+        )
+
+        set_sql = ", ".join([f"{c}=%s" for c in cols])
+        params = [data[c] for c in cols] + [contract_id]
+        cur.execute(f"UPDATE public.contract_overrides SET {set_sql} WHERE contract_id=%s;", params)
+
+
+def db_apply_contract_elements(conn, contract_id: str, adapter: ItemAdapter) -> None:
+    """
+    З YAML:
+      - якщо значення "-" -> DELETE (contract_id, grp, code)
+      - якщо непорожнє -> UPSERT value
+      - якщо ключа нема -> не чіпаємо
+    """
+    with conn.cursor() as cur:
+        for k in ELEMENT_KEYS:
+            raw = adapter.get(k)
+            if raw is None:
+                continue
+            val = str(raw).strip()
+            if val == "":
+                continue
+
+            grp = k[0].upper()
+            code = k.upper()
+
+            if val == "-":
+                cur.execute(
+                    "DELETE FROM public.contract_elements WHERE contract_id=%s AND grp=%s AND code=%s;",
+                    (contract_id, grp, code),
+                )
+            else:
                 cur.execute(
                     """
-                    SELECT id, foglio, numero, sub
-                    FROM immobili
-                    WHERE visura_cf = %s;
+                    INSERT INTO public.contract_elements (contract_id, grp, code, value)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (contract_id, grp, code) DO UPDATE
+                    SET value = EXCLUDED.value;
                     """,
-                    (cf,),
-                )
-                rows = cur.fetchall()
-                if not rows:
-                    logger.warning(
-                        "[DB] upsert_contract_from_yaml: для %s немає записів у immobili "
-                        "(visura ще не збережена?)",
-                        cf,
-                    )
-                    return
-
-                foglio = _clean_str(adapter.get("foglio"))
-                numero = _clean_str(adapter.get("numero"))
-                sub = _clean_str(adapter.get("sub"))
-
-                where_clauses = ["visura_cf = %s"]
-                where_params: List[Any] = [cf]
-
-                if foglio is not None:
-                    where_clauses.append("foglio = %s")
-                    where_params.append(foglio)
-                if numero is not None:
-                    where_clauses.append("numero = %s")
-                    where_params.append(numero)
-                if sub is not None:
-                    where_clauses.append("sub = %s")
-                    where_params.append(sub)
-
-                # Якщо кілька об'єктів і немає foglio/numero/sub — не підписуємо все під один контракт
-                if len(where_clauses) == 1 and len(rows) > 1:
-                    logger.warning(
-                        "[DB] upsert_contract_from_yaml: для %s є %d immobili, "
-                        "але FOGLIO/NUMERO/SUB у YAML не задані — "
-                        "пропускаємо оновлення контрактних полів.",
-                        cf,
-                        len(rows),
-                    )
-                    return
-
-                sql = f"""
-                    UPDATE immobili
-                    SET
-                        contract_kind               = COALESCE(%s, contract_kind),
-                        arredato                    = COALESCE(%s, arredato),
-                        energy_class                = COALESCE(%s, energy_class),
-                        canone_contrattuale_mensile = COALESCE(%s, canone_contrattuale_mensile),
-                        durata_anni                 = COALESCE(%s, durata_anni)
-                    WHERE {" AND ".join(where_clauses)};
-                """
-                params = [
-                    contract_kind,
-                    arredato,
-                    energy_class,
-                    canone_contrattuale_mensile,
-                    durata_anni,
-                    *where_params,
-                ]
-                cur.execute(sql, params)
-                logger.debug(
-                    "[DB] upsert_contract_from_yaml: для %s оновлено контрактні поля (%d рядків)",
-                    cf,
-                    cur.rowcount,
+                    (contract_id, grp, code, val),
                 )
 
-    except Exception as e:
-        logger.exception("[DB] Помилка в upsert_contract_from_yaml(%s): %s", cf, e)
-    finally:
-        if conn is not None:
-            conn.close()
 
-
-# ---------------------------------------------------------------------------
-# Фільтрація Immobile за бажаними критеріями
-# ---------------------------------------------------------------------------
-
-def filter_immobiles(immobiles: List[Immobile], adapter: ItemAdapter) -> List[Immobile]:
+def db_load_contract_context(conn, contract_id: str) -> Dict[str, Any]:
     """
-    Фільтрує список Immobile на основі параметрів в item:
-    foglio, numero, sub, rendita, superficie_totale, categoria.
-
-    Порожні/відсутні параметри ігноруються.
+    Завантажує контекст контракту для генерації шаблону:
+      - contract   (contracts)
+      - overrides  (contract_overrides)
+      - elements   (contract_elements -> dict a1..d13)
+      - parties    (contract_parties join persons)
     """
-    filtered: List[Immobile] = []
-    for imm in immobiles:
-        ok = True
+    ctx: Dict[str, Any] = {
+        "contract": {},
+        "overrides": {},
+        "elements": {},
+        "parties": {},  # <-- ВАЖЛИВО
+        "canone_calc": None,
+    }
 
-        foglio = adapter.get("foglio")
-        if foglio and imm.foglio != str(foglio):
-            ok = False
+    with conn.cursor() as cur:
+        # --- contract ---
+        cur.execute(
+            """
+            SELECT contract_kind, start_date, durata_anni, arredato, energy_class, canone_contrattuale_mensile
+            FROM public.contracts
+            WHERE contract_id=%s;
+            """,
+            (contract_id,),
+        )
+        r = cur.fetchone()
+        if r:
+            contract_kind, start_date, durata_anni, arredato, energy_class, canone = r
+            ctx["contract"] = {
+                "contract_kind": contract_kind,
+                "start_date": start_date.isoformat() if start_date else None,
+                "durata_anni": durata_anni,
+                "arredato": arredato,
+                "energy_class": energy_class,
+                "canone_contrattuale_mensile": str(canone) if canone is not None else None,
+            }
 
-        numero = adapter.get("numero")
-        if numero and imm.numero != str(numero):
-            ok = False
+        # --- overrides ---
+        cur.execute(
+            """
+            SELECT
+              immobile_comune_override,
+              immobile_via_override,
+              immobile_civico_override,
+              immobile_piano_override,
+              immobile_interno_override,
+              locatore_comune_res,
+              locatore_via,
+              locatore_civico
+            FROM public.contract_overrides
+            WHERE contract_id=%s;
+            """,
+            (contract_id,),
+        )
+        o = cur.fetchone()
+        if o:
+            (
+                ic, iv, civ, p, intr,
+                lc, lv, lciv
+            ) = o
+            ctx["overrides"] = {
+                "immobile_comune_override": ic,
+                "immobile_via_override": iv,
+                "immobile_civico_override": civ,
+                "immobile_piano_override": p,
+                "immobile_interno_override": intr,
+                "locatore_comune_res": lc,
+                "locatore_via": lv,
+                "locatore_civico": lciv,
+            }
 
-        sub = adapter.get("sub")
-        if sub and imm.sub != str(sub):
-            ok = False
+        # --- elements ---
+        cur.execute(
+            "SELECT grp, code, value FROM public.contract_elements WHERE contract_id=%s;",
+            (contract_id,),
+        )
+        elements: Dict[str, str] = {}
+        for grp, code, value in cur.fetchall():
+            key = normalize_element_key(str(grp or ""), str(code or ""))
+            if not key:
+                continue
+            elements[key] = "" if value is None else str(value)
+        ctx["elements"] = elements
 
-        categoria = adapter.get("categoria")
-        if categoria and imm.categoria != str(categoria):
-            ok = False
+        # --- parties (JOIN persons) ---
+        cur.execute(
+            """
+            SELECT cp.role, p.cf, p.surname, p.name
+            FROM public.contract_parties cp
+            JOIN public.persons p ON p.cf = cp.person_cf
+            WHERE cp.contract_id = %s;
+            """,
+            (contract_id,),
+        )
+        for role, cf, surname, name in cur.fetchall():
+            ctx["parties"][role] = {"cf": cf, "surname": surname, "name": name}
 
-        rendita = adapter.get("rendita")
-        if rendita and imm.rendita != str(rendita):
-            ok = False
+        # --- latest canone_calcoli ---
+        cur.execute(
+            """
+            SELECT inputs::text
+            FROM public.canone_calcoli
+            WHERE contract_id=%s
+            ORDER BY created_at DESC
+            LIMIT 1;
+            """,
+            (contract_id,),
+        )
+        r = cur.fetchone()
+        if r and r[0]:
+            try:
+                ctx["canone_calc"] = json.loads(r[0])  # {"canone_input": {...}, "result": {...}}
+            except Exception:
+                ctx["canone_calc"] = None
 
-        superficie = adapter.get("superficie_totale")
-        if (
-            superficie
-            and imm.superficie_totale is not None
-            and float(superficie) != imm.superficie_totale
-        ):
-            ok = False
-
-        if ok:
-            filtered.append(imm)
-
-    logger.debug(
-        "[PIPELINE] Відібрано %d/%d immobili згідно критеріїв item",
-        len(filtered),
-        len(immobiles),
+    logger.info(
+        "[DB] ctx loaded contract_id=%s parties=%s elements=%d overrides=%s",
+        contract_id,
+        list((ctx.get("parties") or {}).keys()),
+        len(ctx.get("elements") or {}),
+        bool(ctx.get("overrides")),
     )
-    return filtered
+    return ctx
 
 
-# ---------------------------------------------------------------------------
-# Побудова params для шаблону attestazione
-# ---------------------------------------------------------------------------
-
-def _to_str(value: Any) -> str:
-    """
-    Безпечне приведення до рядка:
-    - None -> ""
-    - інші типи -> str(...)
-    """
-    if value is None:
-        return ""
-    return str(value)
+def db_insert_canone_calc(conn, contract_id: str, method: str, inputs: Dict[str, Any], result_mensile: Optional[float]) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO public.canone_calcoli (contract_id, method, inputs, result_mensile)
+            VALUES (%s, %s, %s, %s);
+            """,
+            (contract_id, method, psycopg2.extras.Json(inputs), result_mensile),
+        )
 
 
-def _pick_override(imm: Immobile, override_attr: str) -> str:
-    """
-    Для полів реальної адреси об'єкта:
-    беремо ТІЛЬКИ значення override з БД (imm.immobile_*_override).
-    Якщо його немає — повертаємо "" (у шаблоні буде тільки підкреслення).
-    """
-    val = getattr(imm, override_attr, None)
-    return _to_str(val)
+def db_insert_attestazione_log(
+    conn,
+    contract_id: str,
+    status: str,
+    output_bucket: str,
+    output_object: str,
+    params_snapshot: Dict[str, Any],
+    error: Optional[str],
+) -> None:
+    masked = mask_username(AE_USERNAME)
+    sha = sha256_text(AE_USERNAME)
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO public.attestazioni (
+              contract_id,
+              author_login_masked,
+              author_login_sha256,
+              template_version,
+              output_bucket,
+              output_object,
+              params_snapshot,
+              status,
+              error
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
+            """,
+            (
+                contract_id,
+                masked,
+                sha,
+                TEMPLATE_VERSION,
+                output_bucket,
+                output_object,
+                psycopg2.extras.Json(params_snapshot),
+                status,
+                error,
+            ),
+        )
 
 
-def _pick_locatore_field(
-    imm: Immobile,
-    adapter: ItemAdapter,
-    yaml_field: str,
-    imm_attr: str,
-) -> str:
-    """
-    Для адреси локатора:
-    1) YAML у поточному запуску (локатор може змінити адресу)
-    2) якщо YAML немає — беремо те, що вже лежить у БД (imm.locatore_*)
-    3) інакше "".
-    """
-    yaml_val = adapter.get(yaml_field)
-    if yaml_val not in (None, ""):
-        return _to_str(yaml_val)
+# ============================================================================
+# Template params builder (під твою логіку: реальна адреса тільки з overrides)
+# ============================================================================
 
-    db_val = getattr(imm, imm_attr, None)
-    if db_val not in (None, ""):
-        return _to_str(db_val)
-
-    return ""
-
-
-def build_params(
-    adapter: ItemAdapter,
-    imm: Immobile,
-    canone: CanoneResult | None = None,
-) -> Dict[str, str]:
-    """
-    Формує dict params → значення для заповнення DOCX-шаблону атестації.
-
-    ВАЖЛИВО:
-    - Адреса об'єкта — ТІЛЬКИ з imm.immobile_*_override (БД), YAML сюди не лізе.
-    - A/B/C/D елементи — також з БД (Immobile), YAML лише оновлює БД перед цим.
-    - CALCOLO DEL CANONE (CAN_*) заповнюється на основі CanoneResult + фактичного
-      canone з договору (YAML/БД).
-    """
+def build_template_params(adapter: ItemAdapter, imm: Immobile, contract_ctx: Dict[str, Any]) -> Dict[str, str]:
     params: Dict[str, str] = {}
 
-    # -----------------------------
-    # LOCATORE (власник)
-    # -----------------------------
-    loc_cf = adapter.get("locatore_cf") or getattr(imm, "locatore_codice_fiscale", None)
-    params["{{LOCATORE_CF}}"] = _to_str(loc_cf)
+    overrides = contract_ctx.get("overrides") or {}
+    elements = contract_ctx.get("elements") or {}
+    contract = contract_ctx.get("contract") or {}
+    parties = contract_ctx.get("parties") or {}
 
-    surname = imm.locatore_surname
-    name = imm.locatore_name
-    # Спочатку ім'я, потім прізвище
-    locatore_nome = " ".join(p for p in (name, surname) if p)
-    params["{{LOCATORE_NOME}}"] = _to_str(locatore_nome)
+    # -------------------------
+    # LOCATORE (from DB parties)
+    # -------------------------
+    loc = parties.get("LOCATORE") or {}
 
-    params["{{LOCATORE_COMUNE_RES}}"] = _pick_locatore_field(
-        imm, adapter, "locatore_comune_res", "locatore_comune_res"
-    )
-    params["{{LOCATORE_VIA}}"] = _pick_locatore_field(
-        imm, adapter, "locatore_via", "locatore_via"
-    )
-    params["{{LOCATORE_CIVICO}}"] = _pick_locatore_field(
-        imm, adapter, "locatore_civico", "locatore_civico"
-    )
+    loc_cf = clean_str(loc.get("cf") or adapter.get("locatore_cf") or adapter.get("codice_fiscale") or "")
+    loc_name = loc.get("name")
+    loc_surname = loc.get("surname")
 
-    # -----------------------------
-    # IMMOBILE (реальна адреса, ТІЛЬКИ override з БД)
-    # -----------------------------
-    params["{{IMMOBILE_COMUNE}}"] = _pick_override(imm, "immobile_comune_override")
-    params["{{IMMOBILE_VIA}}"] = _pick_override(imm, "immobile_via_override")
-    params["{{IMMOBILE_CIVICO}}"] = _pick_override(imm, "immobile_civico_override")
-    params["{{IMMOBILE_PIANO}}"] = _pick_override(imm, "immobile_piano_override")
-    params["{{IMMOBILE_INTERNO}}"] = _pick_override(imm, "immobile_interno_override")
+    # LOCATORE
+    params["{{LOCATORE_CF}}"] = loc_cf
+    params["{{LOCATORE_NOME}}"] = format_person_fullname(loc_name, loc_surname)
+    params["{{LOCATORE_COMUNE_RES}}"] = str(overrides.get("locatore_comune_res") or adapter.get("locatore_comune_res") or "")
+    params["{{LOCATORE_VIA}}"] = str(overrides.get("locatore_via") or adapter.get("locatore_via") or "")
+    params["{{LOCATORE_CIVICO}}"] = str(overrides.get("locatore_civico") or adapter.get("locatore_civico") or "")
 
-    # -----------------------------
-    # Дані катасто (з візури, збережені в БД)
-    # -----------------------------
-    params["{{FOGLIO}}"] = _to_str(imm.foglio)
-    params["{{NUMERO}}"] = _to_str(imm.numero)
-    params["{{SUB}}"] = _to_str(imm.sub)
-    params["{{RENDITA}}"] = _to_str(imm.rendita)
-    params["{{SUPERFICIE_TOTALE}}"] = _to_str(imm.superficie_totale)
-    params["{{CATEGORIA}}"] = _to_str(imm.categoria)
+    # IMMOBILE (real address ONLY overrides)
+    params["{{IMMOBILE_COMUNE}}"] = str(overrides.get("immobile_comune_override") or "")
+    params["{{IMMOBILE_VIA}}"] = str(overrides.get("immobile_via_override") or "")
+    params["{{IMMOBILE_CIVICO}}"] = str(overrides.get("immobile_civico_override") or "")
+    params["{{IMMOBILE_PIANO}}"] = str(overrides.get("immobile_piano_override") or "")
+    params["{{IMMOBILE_INTERNO}}"] = str(overrides.get("immobile_interno_override") or "")
 
-    # -----------------------------
-    # DATI CATASTALI – рядок APPARTAMENTO
-    # -----------------------------
-    params["{{APP_FOGL}}"] = _to_str(imm.foglio)
-    params["{{APP_PART}}"] = _to_str(imm.numero)
-    params["{{APP_SUB}}"] = _to_str(imm.sub)
-    params["{{APP_REND}}"] = _to_str(imm.rendita)
-    params["{{APP_SCAT}}"] = _to_str(imm.superficie_totale)
-    # Поки немає формули riparametrata — ставимо таку саму площу
-    params["{{APP_SRIP}}"] = _to_str(imm.superficie_totale)
-    params["{{APP_CAT}}"] = _to_str(imm.categoria)
+    # Dati catastali (parsed)
+    params["{{FOGLIO}}"] = str(getattr(imm, "foglio", "") or "")
+    params["{{NUMERO}}"] = str(getattr(imm, "numero", "") or "")
+    params["{{SUB}}"] = str(getattr(imm, "sub", "") or "")
+    params["{{RENDITA}}"] = str(getattr(imm, "rendita", "") or "")
+    params["{{SUPERFICIE_TOTALE}}"] = str(getattr(imm, "superficie_totale", "") or "")
+    params["{{CATEGORIA}}"] = str(getattr(imm, "categoria", "") or "")
 
-    # -----------------------------
-    # DATI CATASTALI – рядок TOTALE SUPERFICIE
-    # -----------------------------
-    params["{{TOT_SCAT}}"] = _to_str(imm.superficie_totale)
-    params["{{TOT_SRIP}}"] = _to_str(imm.superficie_totale)
-    params["{{TOT_CAT}}"] = _to_str(imm.categoria)
+    # APP row
+    params["{{APP_FOGL}}"] = params["{{FOGLIO}}"]
+    params["{{APP_PART}}"] = params["{{NUMERO}}"]
+    params["{{APP_SUB}}"] = params["{{SUB}}"]
+    params["{{APP_REND}}"] = params["{{RENDITA}}"]
+    params["{{APP_SCAT}}"] = params["{{SUPERFICIE_TOTALE}}"]
+    params["{{APP_SRIP}}"] = params["{{SUPERFICIE_TOTALE}}"]
+    params["{{APP_CAT}}"] = params["{{CATEGORIA}}"]
 
-    # -----------------------------
-    # DATI CATASTALI – GARAGE/BOX/CANTINA та POSTO MACCHINA
-    #
-    # Поки що окремі об'єкти типу box/posto не парсимо й не зберігаємо —
-    # заповнюємо ці плейсхолдери пустими рядками, щоб у документі
-    # не залишались сирі {{GAR_*}} / {{PST_*}}.
-    # -----------------------------
+    # TOTAL row
+    params["{{TOT_SCAT}}"] = params["{{SUPERFICIE_TOTALE}}"]
+    params["{{TOT_SRIP}}"] = params["{{SUPERFICIE_TOTALE}}"]
+    params["{{TOT_CAT}}"] = params["{{CATEGORIA}}"]
+
+    # GAR/PST placeholders
     for prefix in ("GAR", "PST"):
         for suffix in ("FOGL", "PART", "SUB", "REND", "SCAT", "SRIP", "CAT"):
             params[f"{{{{{prefix}_{suffix}}}}}"] = ""
 
-    # -----------------------------
-    # Дані договору
-    # -----------------------------
-    params["{{CONTRATTO_DATA}}"] = _to_str(adapter.get("contratto_data"))
+    # Contract / registration data
+    params["{{CONTRATTO_DATA}}"] = str(adapter.get("contratto_data") or contract.get("start_date") or "")
+    params["{{DECORRENZA_DATA}}"] = str(adapter.get("decorrenza_data") or contract.get("start_date") or "")
+    params["{{REGISTRAZIONE_DATA}}"] = str(adapter.get("registrazione_data") or "")
+    params["{{REGISTRAZIONE_NUM}}"] = str(adapter.get("registrazione_num") or "")
+    params["{{AGENZIA_ENTRATE_SEDE}}"] = str(adapter.get("agenzia_entrate_sede") or "")
 
-    # -----------------------------
-    # CONDUTTORE (орендар)
-    # -----------------------------
-    params["{{CONDUTTORE_NOME}}"] = _to_str(adapter.get("conduttore_nome"))
-    params["{{CONDUTTORE_CF}}"] = _to_str(adapter.get("conduttore_cf"))
-    params["{{CONDUTTORE_COMUNE}}"] = _to_str(adapter.get("conduttore_comune"))
-    params["{{CONDUTTORE_VIA}}"] = _to_str(adapter.get("conduttore_via"))
+    # Tenant
+    params["{{CONDUTTORE_NOME}}"] = str(adapter.get("conduttore_nome") or "")
+    params["{{CONDUTTORE_CF}}"] = str(adapter.get("conduttore_cf") or "")
+    params["{{CONDUTTORE_COMUNE}}"] = str(adapter.get("conduttore_comune") or "")
+    params["{{CONDUTTORE_VIA}}"] = str(adapter.get("conduttore_via") or "")
 
-    # -----------------------------
-    # Дані реєстрації
-    # -----------------------------
-    params["{{DECORRENZA_DATA}}"] = _to_str(adapter.get("decorrenza_data"))
-    params["{{REGISTRAZIONE_DATA}}"] = _to_str(adapter.get("registrazione_data"))
-    params["{{REGISTRAZIONE_NUM}}"] = _to_str(adapter.get("registrazione_num"))
-    params["{{AGENZIA_ENTRATE_SEDE}}"] = _to_str(adapter.get("agenzia_entrate_sede"))
+    # A/B/C/D elements (з БД, не напряму з YAML)
+    for key in ELEMENT_KEYS:
+        v = str(elements.get(key, "") or "")
+        params[f"{{{{{key}}}}}"] = v
+        params[f"{{{{{key.upper()}}}}}"] = v
 
-    # -----------------------------
-    # A/B/C/D елементи — ТІЛЬКИ з БД (Immobile)
-    # -----------------------------
-    element_keys = [
-        "a1", "a2",
-        "b1", "b2", "b3", "b4", "b5",
-        "c1", "c2", "c3", "c4", "c5", "c6", "c7",
-        "d1", "d2", "d3", "d4", "d5", "d6",
-        "d7", "d8", "d9", "d10", "d11", "d12", "d13",
-    ]
+    # counts
+    def cnt(keys: List[str]) -> int:
+        return sum(1 for k in keys if str(elements.get(k, "") or "").strip() != "")
 
-    for key in element_keys:
-        val = getattr(imm, key, None)
-        val_str = _to_str(val)
-        # Плейсхолдери в шаблоні можуть бути як {{a1}}, так і {{A1}}
-        params[f"{{{{{key}}}}}"] = val_str
-        params[f"{{{{{key.upper()}}}}}"] = val_str
+    params["{{A_CNT}}"] = str(cnt(["a1", "a2"]))
+    params["{{B_CNT}}"] = str(cnt([f"b{i}" for i in range(1, 6)]))
+    params["{{C_CNT}}"] = str(cnt([f"c{i}" for i in range(1, 8)]))
+    params["{{D_CNT}}"] = str(cnt([f"d{i}" for i in range(1, 14)]))
 
-    # -----------------------------
-    # CALCOLO NUMERO ELEMENTI — {{A_CNT}}..{{D_CNT}}
-    # -----------------------------
-    def _count_present(values) -> int:
-        return sum(1 for v in values if v not in (None, ""))
+    # CANONE placeholders default (покриваємо шаблон навіть якщо calc не зробили)
+    for ph in [
+        "CAN_ZONA", "CAN_SUBFASCIA",
+        "CAN_MQ", "CAN_MQ_ANNUO", "CAN_TOTALE_ANNUO",
+        "CAN_ARREDATO", "CAN_CLASSE_A", "CAN_CLASSE_B",
+        "CAN_ENERGY", "CAN_DURATA", "CAN_TRANSITORIO", "CAN_STUDENTI",
+        "CAN_ANNUO_VAR_MIN", "CAN_ANNUO_VAR_MAX",
+        "CAN_MENSILE_VAR_MIN", "CAN_MENSILE_VAR_MAX",
+        "CAN_MENSILE",
+    ]:
+        params[f"{{{{{ph}}}}}"] = ""
 
-    a_cnt = _count_present([getattr(imm, "a1", None), getattr(imm, "a2", None)])
-    b_cnt = _count_present([getattr(imm, "b1", None), getattr(imm, "b2", None),
-                            getattr(imm, "b3", None), getattr(imm, "b4", None), getattr(imm, "b5", None)])
-    c_cnt = _count_present([
-        getattr(imm, "c1", None), getattr(imm, "c2", None), getattr(imm, "c3", None),
-        getattr(imm, "c4", None), getattr(imm, "c5", None), getattr(imm, "c6", None),
-        getattr(imm, "c7", None),
-    ])
-    d_cnt = _count_present([
-        getattr(imm, "d1", None), getattr(imm, "d2", None), getattr(imm, "d3", None),
-        getattr(imm, "d4", None), getattr(imm, "d5", None), getattr(imm, "d6", None),
-        getattr(imm, "d7", None), getattr(imm, "d8", None), getattr(imm, "d9", None),
-        getattr(imm, "d10", None), getattr(imm, "d11", None), getattr(imm, "d12", None),
-        getattr(imm, "d13", None),
-    ])
+    def _fmt_num(x, decimals=2) -> str:
+        if x is None:
+            return ""
+        try:
+            v = float(x)
+        except Exception:
+            return str(x)
+        # без фанатизму: 2 знаки після коми
+        return f"{v:.{decimals}f}"
 
-    # Можемо паралельно оновити в об'єкті (на випадок, якщо далі це ще десь знадобиться)
-    imm.a_cnt = a_cnt
-    imm.b_cnt = b_cnt
-    imm.c_cnt = c_cnt
-    imm.d_cnt = d_cnt
+    def _pct_str(p: float) -> str:
+        # p = 0.15 -> "+15%"
+        sign = "+" if p > 0 else ""
+        return f"{sign}{int(round(p*100))}%"
 
-    # Плейсхолдери в шаблоні CALCOLO NUMERO ELEMENTI
-    params["{{A_CNT}}"] = _to_str(a_cnt)
-    params["{{B_CNT}}"] = _to_str(b_cnt)
-    params["{{C_CNT}}"] = _to_str(c_cnt)
-    params["{{D_CNT}}"] = _to_str(d_cnt)
+    can = contract_ctx.get("canone_calc") or {}
+    cin = can.get("canone_input") or {}
+    res = can.get("result") or {}
 
-    # -----------------------------
-    # CALCOLO DEL CANONE – CAN_*
-    # -----------------------------
-    # Фактичний canone за договором: YAML має пріоритет, але якщо там немає —
-    # беремо з БД (imm.canone_contrattuale_mensile).
-    canone_contr_mens = adapter.get("canone_contrattuale_mensile")
-    if canone_contr_mens in (None, ""):
-        canone_contr_mens = getattr(imm, "canone_contrattuale_mensile", None)
+    if res:
+        zona = res.get("zona")
+        subfascia = res.get("subfascia")
+        base_euro_mq = res.get("base_euro_mq")
 
-    # Якщо canone_result відсутній (розрахунок не вдався) – секцію CAN_* заповнюємо порожнім,
-    # але TOTALE MENSILE CONCORDATO показуємо, якщо він є.
-    if canone is None:
-        placeholders = [
-            "CAN_ZONA", "CAN_SUBFASCIA",
-            "CAN_MQ", "CAN_MQ_ANNUO", "CAN_TOTALE_ANNUO",
-            "CAN_ARREDATO", "CAN_CLASSE_A", "CAN_CLASSE_B",
-            "CAN_ENERGY", "CAN_DURATA", "CAN_TRANSITORIO", "CAN_STUDENTI",
-            "CAN_ANNUO_VAR_MIN", "CAN_ANNUO_VAR_MAX",
-            "CAN_MENSILE_VAR_MIN", "CAN_MENSILE_VAR_MAX",
-            "CAN_MENSILE",
-        ]
-        for ph in placeholders:
-            params[f"{{{{{ph}}}}}"] = ""
+        mq = cin.get("superficie_catastale")
+        if mq is None:
+            mq = getattr(imm, "superficie_totale", None)
 
-        if canone_contr_mens is not None:
-            params["{{CAN_MENSILE}}"] = _to_str(canone_contr_mens)
+        params["{{CAN_ZONA}}"] = "" if zona is None else str(zona)
+        params["{{CAN_SUBFASCIA}}"] = "" if subfascia is None else str(subfascia)
+        params["{{CAN_MQ}}"] = _fmt_num(mq, 0)  # м² зазвичай без копійок
+        params["{{CAN_MQ_ANNUO}}"] = _fmt_num(base_euro_mq, 2)
 
-        return params
+        # базовий annuo (з твого result)
+        params["{{CAN_TOTALE_ANNUO}}"] = _fmt_num(res.get("canone_base_annuo") or res.get("canone_finale_annuo"), 2)
 
-    # Є валідний CanoneResult → заповнюємо
-    params["{{CAN_ZONA}}"] = _to_str(canone.zona)
-    params["{{CAN_SUBFASCIA}}"] = _to_str(canone.subfascia)
+        # ---- Відсоткові “надбавки/знижки” для рядків таблиці ----
+        delta_pct = 0.0
 
-    params["{{CAN_MQ}}"] = _to_str(imm.superficie_totale)
-    params["{{CAN_MQ_ANNUO}}"] = f"{canone.base_euro_mq:.2f}"
-    params["{{CAN_TOTALE_ANNUO}}"] = f"{canone.canone_base_annuo:.2f}"
+        arredato = bool(cin.get("arredato"))
+        if arredato:
+            params["{{CAN_ARREDATO}}"] = _pct_str(0.15)
+            delta_pct += 0.15
 
-    # Надбавки/знижки у % — поки що в тебе в CanoneResult тільки поля
-    # arredamento_delta_pct, energy_delta_pct, studenti_delta_pct.
-    params["{{CAN_ARREDATO}}"] = (
-        f"{canone.arredamento_delta_pct:+.0f}%"
-        if canone.arredamento_delta_pct
-        else ""
-    )
-    # Для CLASSE_A / CLASSE_B поки немає окремих формул → лишаємо порожні.
-    params["{{CAN_CLASSE_A}}"] = ""
-    params["{{CAN_CLASSE_B}}"] = ""
-    params["{{CAN_ENERGY}}"] = (
-        f"{canone.energy_delta_pct:+.0f}%" if canone.energy_delta_pct else ""
-    )
+        energy = (cin.get("energy_class") or "").strip().upper()
+        if energy == "A":
+            params["{{CAN_CLASSE_A}}"] = _pct_str(0.08)
+            delta_pct += 0.08
+        elif energy == "B":
+            params["{{CAN_CLASSE_B}}"] = _pct_str(0.04)
+            delta_pct += 0.04
+        elif energy == "E":
+            params["{{CAN_ENERGY}}"] = _pct_str(-0.02)
+            delta_pct += -0.02
+        elif energy == "F":
+            params["{{CAN_ENERGY}}"] = _pct_str(-0.04)
+            delta_pct += -0.04
+        elif energy == "G":
+            params["{{CAN_ENERGY}}"] = _pct_str(-0.06)
+            delta_pct += -0.06
 
-    # Надбавки за тривалість / transitorio / studenti поки не реалізовані
-    params["{{CAN_DURATA}}"] = ""
-    params["{{CAN_TRANSITORIO}}"] = ""
-    params["{{CAN_STUDENTI}}"] = ""
+        durata = cin.get("durata_anni")
+        try:
+            durata = int(durata) if durata is not None else None
+        except Exception:
+            durata = None
 
-    # Поки немає min/max діапазону по варіаціям — ставимо однакові значення
-    params["{{CAN_ANNUO_VAR_MIN}}"] = f"{canone.canone_finale_annuo:.2f}"
-    params["{{CAN_ANNUO_VAR_MAX}}"] = f"{canone.canone_finale_annuo:.2f}"
-    params["{{CAN_MENSILE_VAR_MIN}}"] = f"{canone.canone_finale_mensile:.2f}"
-    params["{{CAN_MENSILE_VAR_MAX}}"] = f"{canone.canone_finale_mensile:.2f}"
+        if durata == 4:
+            params["{{CAN_DURATA}}"] = _pct_str(0.05); delta_pct += 0.05
+        elif durata == 5:
+            params["{{CAN_DURATA}}"] = _pct_str(0.08); delta_pct += 0.08
+        elif durata is not None and durata >= 6:
+            params["{{CAN_DURATA}}"] = _pct_str(0.10); delta_pct += 0.10
 
-    # TOTALE MENSILE CONCORDATO TRA LE PARTI
-    params["{{CAN_MENSILE}}"] = _to_str(canone_contr_mens)
+        raw_kind = str(cin.get("contract_kind") or "")
+        kind = raw_kind.split(".")[-1].upper()  # "ContractKind.CONCORDATO" -> "CONCORDATO"
+        if kind == "TRANSITORIO":
+            params["{{CAN_TRANSITORIO}}"] = _pct_str(0.15); delta_pct += 0.15
+        elif kind == "STUDENTI":
+            params["{{CAN_STUDENTI}}"] = _pct_str(0.20); delta_pct += 0.20
+
+        # ---- Мін/макс після відсотків ----
+        # ВАЖЛИВО: для цього треба знати min/max €/mq діапазону.
+        # Якщо ти їх не зберіг у result — буде fallback на base_euro_mq (тобто min=max).
+        min_eur = res.get("base_min_euro_mq", base_euro_mq)
+        max_eur = res.get("base_max_euro_mq", base_euro_mq)
+
+        try:
+            mq_f = float(mq or 0.0)
+            min_annuo = float(min_eur or 0.0) * mq_f
+            max_annuo = float(max_eur or 0.0) * mq_f
+            min_annuo_v = min_annuo * (1.0 + delta_pct)
+            max_annuo_v = max_annuo * (1.0 + delta_pct)
+
+            params["{{CAN_ANNUO_VAR_MIN}}"] = _fmt_num(min_annuo_v, 2)
+            params["{{CAN_ANNUO_VAR_MAX}}"] = _fmt_num(max_annuo_v, 2)
+            params["{{CAN_MENSILE_VAR_MIN}}"] = _fmt_num(min_annuo_v / 12.0, 2)
+            params["{{CAN_MENSILE_VAR_MAX}}"] = _fmt_num(max_annuo_v / 12.0, 2)
+        except Exception:
+            pass
+
+    # ---- Узгоджений між сторонами (рядок 22 таблиці) ----
+    agreed = adapter.get("canone_contrattuale_mensile") or contract.get("canone_contrattuale_mensile")
+    if agreed is not None:
+        params["{{CAN_MENSILE}}"] = _fmt_num(agreed, 2)
 
     return params
 
 
-# ---------------------------------------------------------------------------
-# Основний Scrapy pipeline
-# ---------------------------------------------------------------------------
+# ============================================================================
+# Pipeline
+# ============================================================================
 
 class UppiPipeline:
     """
-    Pipeline, який:
-    - для item з visura_source='sister' парсить PDF-візуру, зберігає в БД+MinIO;
-    - для item з visura_source='db_cache' тягне immobili з БД;
-    - генерує DOCX-атестації для вибраних об'єктів;
-    - рахує базовий canone (compute_base_canone) для CALCOLO DEL CANONE.
+    Новий пайплайн під нормалізовану схему БД:
+      persons -> visure -> immobili -> contracts (+ parties/overrides/elements) -> canone_calcoli -> attestazioni
     """
 
-    template_path: Path
-
     def __init__(self):
-        # Шлях до шаблону DOCX
+        self.storage = ObjectStorage()
+
         self.template_path = (
             Path(__file__).resolve().parents[1]
             / "attestazione_template"
             / "template_attestazione_pescara.docx"
         )
 
-    # ------------------------------------------------------------------
-    # Внутрішній helper: збір CanoneInput з Immobile + YAML
-    # ------------------------------------------------------------------
-    def _build_canone_input(self, adapter: ItemAdapter, imm: Immobile) -> CanoneInput:
-        """
-        Формує CanoneInput з Immobile (БД) + YAML.
-
-        Пріоритет:
-        - якщо значення є в Immobile (тобто вже в БД) → беремо його;
-        - якщо в Immobile немає, але є в YAML → беремо з YAML;
-        - інакше дефолт.
-
-        Це відповідає флоу:
-        1) YAML → upsert_* → БД;
-        2) з БД беремо дані для розрахунку;
-        3) YAML може "підмінити" БД тільки якщо ти явно його змінив у поточному запуску.
-        """
-        # 1) Superficie
-        superficie = imm.superficie_totale
-        if superficie is None:
-            yaml_superficie = adapter.get("superficie_totale")
-            try:
-                superficie = float(yaml_superficie) if yaml_superficie is not None else 0.0
-            except (TypeError, ValueError):
-                superficie = 0.0
-
-        # 2) micro_zona та foglio
-        micro_zona = getattr(imm, "micro_zона", None)
-        if not micro_zona:
-            micro_zona = _clean_str(adapter.get("micro_zona"))
-
-        foglio = _clean_str(imm.foglio) or _clean_str(adapter.get("foglio"))
-
-        # 3) категорія / клас
-        categoria = _clean_str(imm.categoria) or _clean_str(adapter.get("categoria"))
-        classe = _clean_str(imm.classe) or _clean_str(adapter.get("classe"))
-
-        # 4) Лічильники A/B/C/D — рахуємо на основі полів imm, щоб бути незалежними від БД
-        def _cnt(values) -> int:
-            return sum(1 for v in values if v not in (None, ""))
-
-        count_a = _cnt([getattr(imm, "a1", None), getattr(imm, "a2", None)])
-        count_b = _cnt([
-            getattr(imm, "b1", None), getattr(imm, "b2", None),
-            getattr(imm, "b3", None), getattr(imm, "b4", None), getattr(imm, "b5", None),
-        ])
-        count_c = _cnt([
-            getattr(imm, "c1", None), getattr(imm, "c2", None), getattr(imm, "c3", None),
-            getattr(imm, "c4", None), getattr(imm, "c5", None),
-            getattr(imm, "c6", None), getattr(imm, "c7", None),
-        ])
-        count_d = _cnt([
-            getattr(imm, "d1", None), getattr(imm, "d2", None), getattr(imm, "d3", None),
-            getattr(imm, "d4", None), getattr(imm, "d5", None), getattr(imm, "d6", None),
-            getattr(imm, "d7", None), getattr(imm, "d8", None), getattr(imm, "d9", None),
-            getattr(imm, "d10", None), getattr(imm, "d11", None),
-            getattr(imm, "d12", None), getattr(imm, "d13", None),
-        ])
-
-        # 5) contract_kind
-        raw_kind = getattr(imm, "contract_kind", None)
-        if not raw_kind:
-            raw_kind = _clean_str(adapter.get("contract_kind")) or "CONCORDATO"
-        try:
-            contract_kind = ContractKind[raw_kind.strip().upper()]
-        except Exception:
-            logger.warning(
-                "[CANONE] Невідомий CONTRACT_KIND=%r, використовую CONCORDATO", raw_kind
-            )
-            contract_kind = ContractKind.CONCORDATO
-
-        # 6) arredato
-        imm_arredato = getattr(imm, "arredato", None)
-        yaml_arredato = adapter.get("arredato")
-        arredato = (
-            _to_bool_or_none(yaml_arredato)
-            if yaml_arredato not in (None, "")
-            else _to_bool_or_none(imm_arredato)
-        ) or False
-
-        # 7) energy_class
-        energy_db = _clean_str(getattr(imm, "energy_class", None))
-        energy_yaml = _clean_str(adapter.get("energy_class"))
-        energy_class = (energy_yaml or energy_db or None)
-        if energy_class:
-            energy_class = energy_class.upper()
-
-        # 8) durata_anni
-        durata = getattr(imm, "durata_anni", None)
-        if durata is None:
-            raw_durata = adapter.get("durata_anni")
-            try:
-                durata = int(raw_durata) if raw_durata is not None else 3
-            except (TypeError, ValueError):
-                logger.warning(
-                    "[CANONE] Невірне DURATA_ANNI=%r, використовую 3", raw_durata
-                )
-                durata = 3
-
-        return CanoneInput(
-            superficie_catastale=float(superficie or 0.0),
-            micro_zona=micro_zona,
-            foglio=foglio,
-            categoria_catasto=categoria,
-            classe_catasto=classe,
-            count_a=count_a,
-            count_b=count_b,
-            count_c=count_c,
-            count_d=count_d,
-            arredato=arredato,
-            energy_class=energy_class,
-            contract_kind=contract_kind,
-            durata_anni=durata,
-        )
-
-    # ------------------------------------------------------------------
-    # Основний вхід Scrapy pipeline
-    # ------------------------------------------------------------------
     def process_item(self, item, spider):
         adapter = ItemAdapter(item)
-        cf = adapter.get("locatore_cf") or adapter.get("codice_fiscale")
 
-        if not cf:
+        locatore_cf = clean_str(adapter.get("locatore_cf") or adapter.get("codice_fiscale"))
+        if not locatore_cf:
             spider.logger.error("[PIPELINE] Item без locatore_cf/codice_fiscale: %r", item)
             return item
 
-        source = adapter.get("visura_source")
+        cond_cf = clean_str(adapter.get("conduttore_cf"))
+
+        # Візура: звідки прийшла
+        visura_source = clean_str(adapter.get("visura_source")) or "unknown"
         visura_downloaded = bool(adapter.get("visura_downloaded"))
-        visura_download_path = adapter.get("visura_download_path")
-        force_update = (
-            bool(adapter.get("force_update_visура"))
-            or bool(adapter.get("FORCE_UPDATE_VISURA"))
-            or bool(getattr(spider, "force_update_visura", False))
-        )
+        force_update_visura = bool(adapter.get("force_update_visura"))
 
         spider.logger.info(
-            "[PIPELINE] CF=%s, visura_source=%r, downloaded=%s, force_update=%s",
-            cf,
-            source,
-            visura_downloaded,
-            force_update,
+            "[PIPELINE] CF=%s source=%s downloaded=%s force_update_visura=%s",
+            locatore_cf, visura_source, visura_downloaded, force_update_visura
         )
 
-        immobiles: List[Immobile] = []
-
-        # ------------------------------------------------------------------
-        # 1) Item з SISTER: очікуємо, що павук вже скачав PDF
-        # ------------------------------------------------------------------
-        if source == "sister":
-            if not visura_downloaded or not visura_download_path:
-                spider.logger.error(
-                    "[PIPELINE] CF=%s, visura_source='sister', але немає PDF "
-                    "(downloaded=%s, path=%r)",
-                    cf,
-                    visura_downloaded,
-                    visura_download_path,
-                )
-
-                # fallback: якщо в БД вже щось є і force_update=False — спробуємо використати БД
-                if not force_update and db_has_visura(cf):
-                    spider.logger.warning(
-                        "[PIPELINE] CF=%s, fallback на БД для immobili через відсутній PDF",
-                        cf,
-                    )
-                    # YAML → БД: overrides, A/B/C/D, контрактні поля
-                    upsert_overrides_from_yaml(cf, adapter)
-                    upsert_elements_from_yaml(cf, adapter)
-                    upsert_contract_from_yaml(cf, adapter)
-                    immobiles = load_immobiles_from_db(cf)
-                else:
-                    return item
-            else:
-                pdf_path = Path(visura_download_path)
-                if not pdf_path.exists():
-                    spider.logger.error(
-                        "[PIPELINE] CF=%s, очікуваний PDF не знайдено: %s",
-                        cf,
-                        pdf_path,
-                    )
-                    # fallback: раптом PDF лежить там, де його кладе get_visura_path
-                    candidate = get_visura_path(cf)
-                    if candidate.exists():
-                        spider.logger.warning(
-                            "[PIPELINE] CF=%s, використовую fallback шлях PDF: %s",
-                            cf,
-                            candidate,
-                        )
-                        pdf_path = candidate
-                    else:
-                        return item
-
-                parser = VisuraParser()
-                try:
-                    imm_dicts = parser.parse(str(pdf_path))
-                except Exception as e:
-                    spider.logger.exception(
-                        "[PIPELINE] Помилка парсингу PDF для %s (%s): %s",
-                        cf,
-                        pdf_path,
-                        e,
-                    )
-                    return item
-
-                if not imm_dicts:
-                    spider.logger.warning(
-                        "[PIPELINE] Після парсингу PDF для %s не знайдено жодного immobile",
-                        cf,
-                    )
-                    return item
-
-                # Спочатку — сирі immobiles з парсера
-                raw_immobiles = [Immobile(**d) for d in imm_dicts]
-                spider.logger.info(
-                    "[PIPELINE] Розпарсено %d immobili з PDF для %s",
-                    len(raw_immobiles),
-                    cf,
-                )
-
-                # Зберігаємо в БД + MinIO
-                try:
-                    save_visura(cf, raw_immobiles, pdf_path)
-                except Exception:
-                    # помилка вже залогована всередині save_visura
-                    return item
-
-                # Після збереження — YAML → БД: overrides, A/B/C/D, контрактні поля
-                upsert_overrides_from_yaml(cf, adapter)
-                upsert_elements_from_yaml(cf, adapter)
-                upsert_contract_from_yaml(cf, adapter)
-
-                # І ТІЛЬКИ ТЕПЕР беремо canonical immobiles з БД
-                immobiles = load_immobiles_from_db(cf)
-                if not immobiles:
-                    spider.logger.warning(
-                        "[PIPELINE] Після save_visura/overrides в БД немає immobilі для %s",
-                        cf,
-                    )
-                    return item
-
-        # ------------------------------------------------------------------
-        # 2) Item з DB cache: visura_source='db_cache'
-        # ------------------------------------------------------------------
-        elif source == "db_cache":
-            spider.logger.info(
-                "[PIPELINE] CF=%s, visura_source='db_cache' → тягнемо immobili з БД",
-                cf,
+        conn = get_pg_connection()
+        try:
+            # --- 1) persons upsert ---
+            # locatore name/surname беремо з парсера (якщо буде), але зараз вставимо що є
+            db_upsert_person(
+                conn,
+                locatore_cf,
+                surname=clean_str(adapter.get("locatore_surname")),
+                name=clean_str(adapter.get("locatore_name")),
             )
-
-            # YAML → БД: overrides, A/B/C/D, контрактні поля
-            upsert_overrides_from_yaml(cf, adapter)
-            upsert_elements_from_yaml(cf, adapter)
-            upsert_contract_from_yaml(cf, adapter)
-
-            immobiles = load_immobiles_from_db(cf)
-            if not immobiles:
-                spider.logger.warning(
-                    "[PIPELINE] В БД немає immobilі для існуючої візури %s",
-                    cf,
+            if cond_cf:
+                db_upsert_person(
+                    conn,
+                    cond_cf,
+                    surname=clean_str(adapter.get("conduttore_surname")),
+                    name=clean_str(adapter.get("conduttore_name")),
                 )
+
+            # --- 2) PDF: знайти локально, якщо в цьому запуску скачали ---
+            pdf_path = None
+            fetched_now = False
+            checksum = None
+            pdf_to_delete: Path | None = None
+
+            if visura_source == "sister" and visura_downloaded:
+                pdf_path = find_local_visura_pdf(locatore_cf, adapter)
+
+                if pdf_path is None:
+                    raise FileNotFoundError(f"Visura PDF not found for CF={locatore_cf} (downloaded=True)")
+
+                checksum = sha256_file(pdf_path)
+
+                # upload to S3 (MinIO/R2)
+                bucket = self.storage.cfg.visure_bucket
+                obj_name = self.storage.visura_object_name(locatore_cf)
+                self.storage.upload_file(bucket, obj_name, pdf_path, content_type="application/pdf")
+                fetched_now = True
+
+                # upsert visura in DB
+                db_upsert_visura(conn, locatore_cf, bucket, obj_name, checksum, fetched_now=True)
+
+                pdf_to_delete = pdf_path
+
+            else:
+                # Якщо не sister — не чіпаємо fetched_at, але тримаємо canonical bucket/object
+                bucket = self.storage.cfg.visure_bucket
+                obj_name = self.storage.visura_object_name(locatore_cf)
+                db_upsert_visura(conn, locatore_cf, bucket, obj_name, checksum_sha256=None, fetched_now=False)
+
+                # Якщо файл є локально, а ми в cache-режимі — теж можемо прибрати (за бажанням)
+                maybe_local = find_local_visura_pdf(locatore_cf, adapter)
+                if maybe_local is not None:
+                    pdf_to_delete = maybe_local
+
+            # --- 3) Parse PDF -> upsert immobili ---
+            keep_ids: List[int] = []
+            if fetched_now and pdf_path is not None:
+                parser = VisuraParser()
+                parsed_dicts = parser.parse(pdf_path)
+
+                if not parsed_dicts:
+                    spider.logger.warning("[PIPELINE] No immobili parsed from PDF CF=%s", locatore_cf)
+                else:
+                    # також збагачуємо persons з PDF, якщо є locatore
+                    loc_surname = clean_str(parsed_dicts[0].get("locatore_surname"))
+                    loc_name = clean_str(parsed_dicts[0].get("locatore_name"))
+                    if loc_surname or loc_name:
+                        db_upsert_person(conn, locatore_cf, surname=loc_surname, name=loc_name)
+
+                    for d in parsed_dicts:
+                        logger.info(
+                            "[PIPELINE] PARSED immobile: foglio=%r numero=%r sub=%r categoria=%r sup=%r indirizzo=%r",
+                            d.get("foglio"), d.get("numero"), d.get("sub"), d.get("categoria"),
+                            d.get("superficie_totale"), d.get("via_name") or d.get("indirizzo_raw"),
+                        )
+                        imm = immobile_from_parsed_dict(d)
+
+                        logger.info(
+                            "[PIPELINE] IMM OBJ: foglio=%r numero=%r sub=%r categoria=%r sup=%r",
+                            imm.foglio, imm.numero, imm.sub, imm.categoria, imm.superficie_totale
+                        )
+
+                        imm_id = db_upsert_immobile(conn, locatore_cf, imm)
+
+                        logger.info("[PIPELINE] UPSERT immobile -> id=%r", imm_id)
+
+                        keep_ids.append(imm_id)
+
+                    logger.info("[PIPELINE] keep_ids=%s (count=%d)", keep_ids, len(keep_ids))
+                    
+                    deleted = db_prune_old_immobili_without_contracts(conn, locatore_cf, keep_ids)
+                    if deleted:
+                        spider.logger.info("[DB] Pruned %d old immobili (no contracts) CF=%s", deleted, locatore_cf)
+
+            # --- 4) Load immobili from DB (canonical) ---
+            immobili_db = db_load_immobili(conn, locatore_cf)
+            if not immobili_db:
+                spider.logger.error("[PIPELINE] No immobili in DB for CF=%s", locatore_cf)
+                conn.commit()
                 return item
 
-        # ------------------------------------------------------------------
-        # 3) Backward-compat: item без visura_source
-        # ------------------------------------------------------------------
-        else:
-            has_in_db = db_has_visura(cf)
-            spider.logger.info(
-                "[PIPELINE] CF=%s, visura_source is None, has_in_db=%s, force_update=%s",
-                cf,
-                has_in_db,
-                force_update,
-            )
+            # --- 5) Filter by YAML to select immobile(s) ---
+            selected = filter_immobiles_by_yaml(immobili_db, adapter)
+            if not selected:
+                spider.logger.warning("[PIPELINE] No immobili matched YAML filter CF=%s", locatore_cf)
+                conn.commit()
+                return item
 
-            if force_update or not has_in_db:
-                # Маємо перерахувати візуру з локального PDF
-                pdf_path = get_visura_path(cf)
-                if not pdf_path.exists():
-                    spider.logger.error(
-                        "[PIPELINE] CF=%s, очікуваний PDF (backward) не знайдено: %s",
-                        cf,
-                        pdf_path,
-                    )
-                    return item
+            # --- 6) For each selected immobile: contract + overrides + elements + generate attestazione ---
+            for immobile_id, imm in selected:
+                force_new_contract = bool(adapter.get("force_new_contract") or False)
+                contract_id = None if force_new_contract else db_get_latest_contract_id(conn, immobile_id)
+                if not contract_id:
+                    contract_id = db_create_contract(conn, immobile_id)
 
-                parser = VisuraParser()
+                db_update_contract_fields(conn, contract_id, adapter)
+                db_upsert_contract_parties(conn, contract_id, locatore_cf, cond_cf)
+                db_upsert_contract_overrides(conn, contract_id, adapter)
+                db_apply_contract_elements(conn, contract_id, adapter)
+
+                contract_ctx = db_load_contract_context(conn, contract_id)
+
+                # --- 7) Canone calc (optional) ---
+                canone_snapshot: Dict[str, Any] = {}
+                canone_result_snapshot: Optional[Dict[str, Any]] = None
+
+                if compute_base_canone is not None and CanoneInput is not None and ContractKind is not None:
+                    try:
+                        elements = contract_ctx.get("elements") or {}
+                        def cnt(keys: List[str]) -> int:
+                            return sum(1 for k in keys if str(elements.get(k, "") or "").strip() != "")
+
+                        raw_kind = clean_str(adapter.get("contract_kind")) or "CONCORDATO"
+                        raw_kind = raw_kind.upper()
+                        try:
+                            kind_enum = ContractKind[raw_kind]
+                        except Exception:
+                            kind_enum = ContractKind.CONCORDATO
+
+                        sup = getattr(imm, "superficie_totale", None)
+                        if sup is None:
+                            sup = safe_float(adapter.get("superficie_totale"))
+
+                        can_in = CanoneInput(
+                            superficie_catastale=float(sup or 0.0),
+                            micro_zona=clean_str(getattr(imm, "micro_zona", None)),
+                            foglio=clean_str(getattr(imm, "foglio", None)),
+                            categoria_catasto=clean_str(getattr(imm, "categoria", None)),
+                            classe_catasto=clean_str(getattr(imm, "classe", None)),
+                            count_a=cnt(["a1", "a2"]),
+                            count_b=cnt([f"b{i}" for i in range(1, 6)]),
+                            count_c=cnt([f"c{i}" for i in range(1, 8)]),
+                            count_d=cnt([f"d{i}" for i in range(1, 14)]),
+                            arredato=bool(to_bool_or_none(adapter.get("arredato"))),
+                            energy_class=clean_str(adapter.get("energy_class")),
+                            contract_kind=kind_enum,
+                            durata_anni=int(adapter.get("durata_anni") or 3),
+                        )
+
+                        canone_snapshot = {
+                            "superficie_catastale": can_in.superficie_catastale,
+                            "micro_zona": can_in.micro_zona,
+                            "foglio": can_in.foglio,
+                            "categoria_catasto": can_in.categoria_catasto,
+                            "classe_catasto": can_in.classe_catasto,
+                            "count_a": can_in.count_a,
+                            "count_b": can_in.count_b,
+                            "count_c": can_in.count_c,
+                            "count_d": can_in.count_d,
+                            "arredato": can_in.arredato,
+                            "energy_class": can_in.energy_class,
+                            "contract_kind": str(can_in.contract_kind),
+                            "durata_anni": can_in.durata_anni,
+                        }
+
+                        can_res = compute_base_canone(can_in)
+                        canone_result_snapshot = {
+                            "zona": getattr(can_res, "zona", None),
+                            "subfascia": getattr(can_res, "subfascia", None),
+                            "base_min_euro_mq": getattr(can_res, "base_min_euro_mq", None),
+                            "base_max_euro_mq": getattr(can_res, "base_max_euro_mq", None),
+                            "base_euro_mq": getattr(can_res, "base_euro_mq", None),
+                            "canone_base_annuo": getattr(can_res, "canone_base_annuo", None),
+                            "canone_finale_annuo": getattr(can_res, "canone_finale_annuo", None),
+                            "canone_finale_mensile": getattr(can_res, "canone_finale_mensile", None),
+                        }
+
+                        # write canone_calcoli
+                        result_m = None
+                        try:
+                            result_m = float(getattr(can_res, "canone_finale_mensile", None))
+                        except Exception:
+                            result_m = None
+
+                        db_insert_canone_calc(
+                            conn,
+                            contract_id=contract_id,
+                            method="pescara2018_base",
+                            inputs={"canone_input": canone_snapshot, "result": canone_result_snapshot},
+                            result_mensile=result_m,
+                        )
+
+                        # Update contract_ctx with canone_calc
+                        contract_ctx = db_load_contract_context(conn, contract_id)
+
+                    except CanoneCalculationError as e:
+                        spider.logger.warning("[CANONE] Logical error contract=%s immobile_id=%s: %s", contract_id, immobile_id, e)
+                    except Exception as e:
+                        spider.logger.exception("[CANONE] Unexpected error contract=%s immobile_id=%s: %s", contract_id, immobile_id, e)
+
+                # --- 8) Build template params + generate DOCX ---
+                logger.info("[PIPELINE] contract_ctx.parties=%r", contract_ctx.get("parties"))
+                params = build_template_params(adapter, imm, contract_ctx)
+
+                output_path = get_attestazione_path(locatore_cf, contract_id, imm)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Генерація DOCX
                 try:
-                    imm_dicts = parser.parse(str(pdf_path))
+                    fill_attestazione_template(
+                        template_path=str(self.template_path),
+                        output_folder=str(output_path.parent),
+                        filename=output_path.name,
+                        params=params,
+                        underscored=underscored,
+                    )
                 except Exception as e:
-                    spider.logger.exception(
-                        "[PIPELINE] Помилка парсингу PDF (backward) для %s (%s): %s",
-                        cf,
-                        pdf_path,
-                        e,
+                    spider.logger.exception("[PIPELINE] DOCX generation failed contract=%s: %s", contract_id, e)
+                    # лог в БД
+                    db_insert_attestazione_log(
+                        conn,
+                        contract_id=contract_id,
+                        status="failed",
+                        output_bucket=self.storage.cfg.attestazioni_bucket,
+                        output_object=self.storage.attestazione_object_name(locatore_cf, contract_id),
+                        params_snapshot={"locatore_cf": locatore_cf, "contract_id": contract_id, "error_stage": "docx_generation"},
+                        error=str(e)[:5000],
                     )
-                    return item
+                    continue
 
-                if not imm_dicts:
-                    spider.logger.warning(
-                        "[PIPELINE] Після парсингу PDF (backward) для %s не знайдено жодного immobile",
-                        cf,
-                    )
-                    return item
-
-                raw_immobiles = [Immobile(**d) for d in imm_dicts]
-                spider.logger.info(
-                    "[PIPELINE] (backward) Розпарсено %d immobili з PDF для %s",
-                    len(raw_immobiles),
-                    cf,
-                )
-
+                # Upload DOCX
                 try:
-                    save_visura(cf, raw_immobiles, pdf_path)
-                except Exception:
-                    return item
-
-                # Після збереження — YAML → БД
-                upsert_overrides_from_yaml(cf, adapter)
-                upsert_elements_from_yaml(cf, adapter)
-                upsert_contract_from_yaml(cf, adapter)
-
-                # І далі працюємо вже з canonical даними з БД
-                immobiles = load_immobiles_from_db(cf)
-                if not immobiles:
-                    spider.logger.warning(
-                        "[PIPELINE] (backward) Після save_visura/overrides в БД немає immobilі для %s",
-                        cf,
+                    out_bucket = self.storage.cfg.attestazioni_bucket
+                    out_obj = self.storage.attestazione_object_name(locatore_cf, contract_id)
+                    self.storage.upload_file(
+                        out_bucket,
+                        out_obj,
+                        output_path,
+                        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     )
-                    return item
-            else:
-                # Візура вже є в БД, PDF не чіпаємо
-                # Але YAML може містити нові overrides/A/B/C/D/контракт → оновлюємо й читаємо
-                upsert_overrides_from_yaml(cf, adapter)
-                upsert_elements_from_yaml(cf, adapter)
-                upsert_contract_from_yaml(cf, adapter)
 
-                immobiles = load_immobiles_from_db(cf)
-                if not immobiles:
-                    spider.logger.warning(
-                        "[PIPELINE] (backward) В БД немає immobilі для існуючої візури %s",
-                        cf,
+                    params_snapshot = {
+                        "locatore_cf": locatore_cf,
+                        "immobile_id": immobile_id,
+                        "contract_id": contract_id,
+                        "yaml_item": dict(adapter.asdict()),
+                        "immobile_parsed": immobile_db_row(imm),
+                        "contract_ctx": contract_ctx,
+                        "template_version": TEMPLATE_VERSION,
+                        "author_login_masked": mask_username(AE_USERNAME),
+                        "canone_input": canone_snapshot,
+                        "canone_result": canone_result_snapshot,
+                        "output": {"bucket": out_bucket, "object": out_obj},
+                    }
+
+                    db_insert_attestazione_log(
+                        conn,
+                        contract_id=contract_id,
+                        status="generated",
+                        output_bucket=out_bucket,
+                        output_object=out_obj,
+                        params_snapshot=params_snapshot,
+                        error=None,
                     )
-                    return item
 
-        # ------------------------------------------------------------------
-        # 4) Фільтрація immobili згідно критеріїв і генерація DOCX
-        # ------------------------------------------------------------------
-        selected_immobiles = filter_immobiles(immobiles, adapter)
-        if not selected_immobiles:
-            spider.logger.warning(
-                "[PIPELINE] Для %s жоден immobile не пройшов фільтр. Аттестації не створені.",
-                cf,
-            )
+                    spider.logger.info("[PIPELINE] Attestazione OK contract=%s -> %s/%s", contract_id, out_bucket, out_obj)
+
+                except Exception as e:
+                    spider.logger.exception("[PIPELINE] Upload/log attestazione failed contract=%s: %s", contract_id, e)
+                    db_insert_attestazione_log(
+                        conn,
+                        contract_id=contract_id,
+                        status="failed",
+                        output_bucket=self.storage.cfg.attestazioni_bucket,
+                        output_object=self.storage.attestazione_object_name(locatore_cf, contract_id),
+                        params_snapshot={"locatore_cf": locatore_cf, "contract_id": contract_id, "error_stage": "upload_or_log"},
+                        error=str(e)[:5000],
+                    )
+
+            conn.commit()
+            if DELETE_LOCAL_VISURA_AFTER_UPLOAD and pdf_to_delete is not None:
+                safe_unlink(pdf_to_delete)
             return item
 
-        for imm in selected_immobiles:
-            # 1) Розрахунок canone для цього immobile
-            canone_result: CanoneResult | None = None
+        except psycopg2.Error as e:
+            spider.logger.exception("[PIPELINE] DB error CF=%s: %s", locatore_cf, e)
             try:
-                canone_input = self._build_canone_input(adapter, imm)
-                if canone_input.superficie_catastale <= 0:
-                    raise CanoneCalculationError(
-                        f"superficie_catastale <= 0: {canone_input.superficie_catastale}"
-                    )
-                canone_result = compute_base_canone(canone_input)
-            except CanoneCalculationError as e:
-                spider.logger.warning(
-                    "[CANONE] Логічна помилка при розрахунку canone для CF=%s imm=%s: %s",
-                    cf,
-                    getattr(imm, "table_num_immobile", None),
-                    e,
-                )
-            except Exception as e:
-                spider.logger.exception(
-                    "[CANONE] Неочікувана помилка при розрахунку canone для CF=%s imm=%s: %s",
-                    cf,
-                    getattr(imm, "table_num_immobile", None),
-                    e,
-                )
+                conn.rollback()
+            except Exception:
+                pass
+            return item
 
-            # 2) Формуємо params для шаблону, передаємо canone_result
-            params = build_params(adapter, imm, canone_result)
-
-            # 3) Генеруємо attestazione
-            output_path = get_attestazione_path(cf, imm)
-            output_folder = output_path.parent
-            output_folder.mkdir(parents=True, exist_ok=True)
-
-            spider.logger.info(
-                "[PIPELINE] Генеруємо attestazione для %s → %s", cf, output_path
-            )
+        except Exception as e:
+            spider.logger.exception("[PIPELINE] Fatal error CF=%s: %s", locatore_cf, e)
             try:
-                fill_attestazione_template(
-                    template_path=str(self.template_path),
-                    output_folder=str(output_folder),
-                    filename=output_path.name,
-                    params=params,
-                    underscored=underscored,
-                )
-            except Exception as e:
-                spider.logger.exception(
-                    "[PIPELINE] Помилка при генерації attestazione для %s (%s): %s",
-                    cf,
-                    output_path,
-                    e,
-                )
+                conn.rollback()
+            except Exception:
+                pass
+            return item
 
-        return item
+        finally:
+            conn.close()

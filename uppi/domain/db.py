@@ -1,6 +1,9 @@
+# uppi/domain/db.py
+from __future__ import annotations
+
 import logging
 
-import psycopg
+import psycopg2
 from decouple import config
 
 logger = logging.getLogger(__name__)
@@ -13,37 +16,16 @@ DB_PASSWORD = config("DB_PASSWORD", default="uppi_password")
 DB_SSL_MODE = config("DB_SSL_MODE", default="prefer")
 
 
-def _get_pg_connection():
+def get_pg_connection():
     """
-    Отримати новий конекшн до PostgreSQL.
+    Отримати новий конекшн до PostgreSQL (psycopg2).
 
-    Очікувана схема БД:
-
-        CREATE TABLE visure (
-            cf TEXT PRIMARY KEY,
-            pdf_bucket TEXT NOT NULL,
-            pdf_object TEXT NOT NULL,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        );
-
-        CREATE TABLE immobili (
-            id BIGSERIAL PRIMARY KEY,
-            visura_cf TEXT NOT NULL REFERENCES visure(cf) ON DELETE CASCADE,
-            immobile_comune   TEXT,
-            via_name          TEXT,
-            via_num           TEXT,
-            piano             TEXT,
-            interno           TEXT,
-            foglio            TEXT,
-            numero            TEXT,
-            sub               TEXT,
-            rendita           TEXT,
-            superficie_totale NUMERIC,
-            categoria         TEXT
-        );
+    Важливо:
+    - autocommit = False (транзакції керуються явно)
+    - виключення не ковтаємо: нехай падає, бо це критична інфраструктура
     """
     try:
-        conn = psycopg.connect(
+        conn = psycopg2.connect(
             host=DB_HOST,
             port=DB_PORT,
             dbname=DB_NAME,
@@ -51,27 +33,33 @@ def _get_pg_connection():
             password=DB_PASSWORD,
             sslmode=DB_SSL_MODE,
         )
+        conn.autocommit = False
         return conn
-    except psycopg.Error as e:
+    except psycopg2.Error as e:
         logger.exception("[DB] Не вдалося підключитися до PostgreSQL: %s", e)
         raise
 
 
 def db_has_visura(cf: str) -> bool:
-    """Повертає True, якщо візура для заданого CF існує в таблиці visure."""
+    """
+    Повертає True, якщо візура для заданого CF існує в таблиці visure.
+    """
     conn = None
     try:
-        conn = _get_pg_connection()
+        conn = get_pg_connection()
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT 1 FROM visure WHERE cf = %s LIMIT 1;",
-                (cf,),
-            )
+            cur.execute("SELECT 1 FROM public.visure WHERE cf = %s LIMIT 1;", (cf,))
             exists = cur.fetchone() is not None
             logger.debug("[DB] db_has_visura(%s) → %s", cf, exists)
+            conn.commit()
             return exists
-    except psycopg.Error as e:
+    except psycopg2.Error as e:
         logger.exception("[DB] Помилка при перевірці visura для %s: %s", cf, e)
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         return False
     finally:
         if conn is not None:
