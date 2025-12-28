@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Dict, List
 
 from uppi.domain.immobile import Immobile
@@ -114,10 +113,10 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
         if x is None:
             return ""
         try:
-            v = float(x)
+            val = float(x)
         except Exception:
             return str(x)
-        return f"{v:.{decimals}f}"
+        return f"{val:.{decimals}f}"
 
     def _pct_str(p: float) -> str:
         sign = "+" if p > 0 else ""
@@ -176,11 +175,11 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
             params["{{CAN_DURATA}}"] = _pct_str(0.05)
             delta_pct += 0.05
         elif durata == 5:
-            params["{{CAN_DURATA}}"] = _pct_str(0.08)
-            delta_pct += 0.08
+            params["{{CAN_DURATA}}"] = _pct_str(0.06)
+            delta_pct += 0.06
         elif durata is not None and durata >= 6:
-            params["{{CAN_DURATA}}"] = _pct_str(0.10)
-            delta_pct += 0.10
+            params["{{CAN_DURATA}}"] = _pct_str(0.07)
+            delta_pct += 0.07
 
         raw_kind = str(cin.get("contract_kind") or "")
         kind = raw_kind.split(".")[-1].upper()
