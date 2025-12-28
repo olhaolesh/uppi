@@ -1,3 +1,6 @@
+-- Після створення таблиць необхідно перевірити чи всі взаємозвязки працюють коректно.
+-- Для цього виконати вставки тестових даних у відповідному порядку з файлв test_inserts.sql
+
 BEGIN;
 
 -- =========================================================
@@ -78,7 +81,13 @@ CREATE TABLE IF NOT EXISTS public.immobili (
   sez_urbana            TEXT,
   foglio                TEXT,
   numero                TEXT,
-  sub                   TEXT,
+
+  -- IMPORTANT:
+  -- sub використовуємо як частину канонічного ключа. Нормалізуємо: NULL -> ''.
+  -- На "свіжій" БД створимо одразу NOT NULL DEFAULT '', але для вже існуючої
+  -- таблиці нижче є DO-блок з ALTER/UPDATE.
+  sub                   TEXT NOT NULL DEFAULT '',
+
   zona_cens             TEXT,
   micro_zona            TEXT,
   categoria             TEXT,
@@ -110,6 +119,44 @@ CREATE TABLE IF NOT EXISTS public.immobili (
 CREATE INDEX IF NOT EXISTS idx_immobili_visura_cf ON public.immobili(visura_cf);
 CREATE INDEX IF NOT EXISTS idx_immobili_catasto   ON public.immobili(foglio, numero, sub);
 CREATE INDEX IF NOT EXISTS idx_immobili_comune_code ON public.immobili(immobile_comune_code);
+
+-- --- Ensure sub normalization + uniqueness even if table already existed ---
+DO $$
+DECLARE
+  is_nullable TEXT;
+BEGIN
+  -- 1) Ensure sub DEFAULT '' and NOT NULL (idempotent + safe for existing DB)
+  SELECT c.is_nullable
+    INTO is_nullable
+  FROM information_schema.columns c
+  WHERE c.table_schema = 'public'
+    AND c.table_name = 'immobili'
+    AND c.column_name = 'sub';
+
+  -- If column exists and is nullable -> normalize old NULLs before NOT NULL
+  IF is_nullable = 'YES' THEN
+    EXECUTE 'UPDATE public.immobili SET sub = '''' WHERE sub IS NULL;';
+    EXECUTE 'ALTER TABLE public.immobili ALTER COLUMN sub SET DEFAULT '''';';
+    EXECUTE 'ALTER TABLE public.immobili ALTER COLUMN sub SET NOT NULL;';
+  ELSE
+    -- Still enforce default (harmless if already set)
+    EXECUTE 'ALTER TABLE public.immobili ALTER COLUMN sub SET DEFAULT '''';';
+  END IF;
+
+  -- 2) Add UNIQUE constraint on canonical key if missing
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'uq_immobili_visura_fns'
+      AND conrelid = 'public.immobili'::regclass
+  ) THEN
+    -- NOTE: якщо у таблиці вже є дублікати, цей крок впаде.
+    -- Це нормально: спочатку почистити дублікати, потім додати constraint.
+    EXECUTE 'ALTER TABLE public.immobili
+             ADD CONSTRAINT uq_immobili_visura_fns
+             UNIQUE (visura_cf, foglio, numero, sub);';
+  END IF;
+END$$;
 
 DO $$
 BEGIN
@@ -221,7 +268,6 @@ CREATE INDEX IF NOT EXISTS idx_canone_calcoli_contract_id ON public.canone_calco
 
 -- =========================================================
 -- 9) ATTESTAZIONI (лог кожної генерації)
---    ВАЖЛИВО: зберігаємо ТІЛЬКИ masked username (і опційно hash)
 -- =========================================================
 CREATE TABLE IF NOT EXISTS public.attestazioni (
   attestazione_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -229,14 +275,14 @@ CREATE TABLE IF NOT EXISTS public.attestazioni (
 
   generated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-  author_login_masked TEXT NOT NULL,  -- вже замаскований AE_USERNAME (на рівні коду)
-  author_login_sha256 TEXT,           -- sha256 від оригінального username (опційно, для точного аудиту без розкриття)
+  author_login_masked TEXT NOT NULL,
+  author_login_sha256 TEXT,
 
   template_version    TEXT,
   output_bucket       TEXT NOT NULL,
   output_object       TEXT NOT NULL,
 
-  params_snapshot     JSONB NOT NULL, -- повний набір параметрів (YAML+parsed+computed+template_context+versions)
+  params_snapshot     JSONB NOT NULL,
   params_hash         TEXT GENERATED ALWAYS AS (
     encode(digest(params_snapshot::text, 'sha256'), 'hex')
   ) STORED,
@@ -250,5 +296,33 @@ CREATE INDEX IF NOT EXISTS idx_attestazioni_contract_id   ON public.attestazioni
 CREATE INDEX IF NOT EXISTS idx_attestazioni_generated_at  ON public.attestazioni(generated_at);
 CREATE INDEX IF NOT EXISTS idx_attestazioni_author_masked ON public.attestazioni(author_login_masked);
 CREATE INDEX IF NOT EXISTS idx_attestazioni_params_hash   ON public.attestazioni(params_hash);
+
+-- =========================================================
+-- 10) CONTRACT_OVERRIDES (override-адреси)
+-- =========================================================
+CREATE TABLE IF NOT EXISTS public.contract_overrides (
+  contract_id UUID PRIMARY KEY REFERENCES public.contracts(contract_id) ON DELETE CASCADE,
+
+  immobile_comune_override  TEXT,
+  immobile_via_override     TEXT,
+  immobile_civico_override  TEXT,
+  immobile_piano_override   TEXT,
+  immobile_interno_override TEXT,
+
+  locatore_comune_res       TEXT,
+  locatore_via              TEXT,
+  locatore_civico           TEXT,
+
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_contract_overrides_updated_at') THEN
+    CREATE TRIGGER trg_contract_overrides_updated_at
+    BEFORE UPDATE ON public.contract_overrides
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+  END IF;
+END$$;
 
 COMMIT;
