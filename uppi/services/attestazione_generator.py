@@ -64,8 +64,8 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
         for suffix in ("FOGL", "PART", "SUB", "REND", "SCAT", "SRIP", "CAT"):
             params[f"{{{{{prefix}_{suffix}}}}}"] = ""
 
-    params["{{CONTRATTO_DATA}}"] = str(adapter.get("contratto_data") or contract.get("start_date") or "")
-    params["{{DECORRENZA_DATA}}"] = str(adapter.get("decorrenza_data") or contract.get("start_date") or "")
+    params["{{CONTRATTO_DATA}}"] = str(adapter.get("contratto_data") or "")
+    params["{{DECORRENZA_DATA}}"] = str(adapter.get("decorrenza_data") or "")
     params["{{REGISTRAZIONE_DATA}}"] = str(adapter.get("registrazione_data") or "")
     params["{{REGISTRAZIONE_NUM}}"] = str(adapter.get("registrazione_num") or "")
     params["{{AGENZIA_ENTRATE_SEDE}}"] = str(adapter.get("agenzia_entrate_sede") or "")
@@ -93,6 +93,7 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
         "CAN_SUBFASCIA",
         "CAN_MQ",
         "CAN_MQ_ANNUO",
+        "CAN_ISTAT",
         "CAN_TOTALE_ANNUO",
         "CAN_ARREDATO",
         "CAN_CLASSE_A",
@@ -110,6 +111,7 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
         params[f"{{{{{ph}}}}}"] = ""
 
     def _fmt_num(x, decimals=2) -> str:
+        """ Форматує число з фіксованою кількістю десяткових знаків."""
         if x is None:
             return ""
         try:
@@ -119,6 +121,7 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
         return f"{val:.{decimals}f}"
 
     def _pct_str(p: float) -> str:
+        """ Форматує відсоток як рядок з знаком +/-. """
         sign = "+" if p > 0 else ""
         return f"{sign}{int(round(p * 100))}%"
 
@@ -126,10 +129,18 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
     cin = can.get("canone_input") or {}
     res = can.get("result") or {}
 
+    if cin:
+        istat = cin.get("istat")
+        params["{{CAN_ISTAT}}"] = "" if not istat else f"ISTAT (+{_fmt_num(istat, 2)}%)"
+
     if res:
         zona = res.get("zona")
         subfascia = res.get("subfascia")
-        base_euro_mq = res.get("base_euro_mq")
+        # # Базова вартість за м² (неформатована) не використовується в розрахунках далі тому що використовується base_euro_mq_istat
+        # base_euro_mq = res.get("base_euro_mq")
+        base_euro_mq_istat = res.get("base_euro_mq_istat")
+
+
 
         mq = cin.get("superficie_catastale")
         if mq is None:
@@ -138,31 +149,44 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
         params["{{CAN_ZONA}}"] = "" if zona is None else str(zona)
         params["{{CAN_SUBFASCIA}}"] = "" if subfascia is None else str(subfascia)
         params["{{CAN_MQ}}"] = _fmt_num(mq, 0)
-        params["{{CAN_MQ_ANNUO}}"] = _fmt_num(base_euro_mq, 2)
-        params["{{CAN_TOTALE_ANNUO}}"] = _fmt_num(res.get("canone_base_annuo") or res.get("canone_finale_annuo"), 2)
+        params["{{CAN_MQ_ANNUO}}"] = _fmt_num(base_euro_mq_istat, 2)
+
+
+        # Отримуємо чисте число (НЕ форматуємо його поки що)
+        raw_canone = res.get("canone_base_annuo") or res.get("canone_finale_annuo")
+        # Записуємо в params форматований рядок для шаблону
+        params["{{CAN_TOTALE_ANNUO}}"] = _fmt_num(raw_canone, 2)
 
         delta_pct = 0.0
 
-        arredato = bool(cin.get("arredato"))
+        arredato = float(cin.get("arredato"))
         if arredato:
-            params["{{CAN_ARREDATO}}"] = _pct_str(0.15)
-            delta_pct += 0.15
+            # Використовуємо для розрахунку число raw_canone, а не рядок
+            valore_arredato = raw_canone * arredato
+            # Форматуємо результат розрахунку перед записом у шаблон
+            params["{{CAN_ARREDATO}}"] = f"({_pct_str(arredato)})  +{_fmt_num(valore_arredato, 2)}"
+            delta_pct += arredato
 
         energy = (cin.get("energy_class") or "").strip().upper()
         if energy == "A":
-            params["{{CAN_CLASSE_A}}"] = _pct_str(0.08)
+            valore_energy_a = raw_canone * 0.08
+            params["{{CAN_CLASSE_A}}"] = f"({_pct_str(0.08)}) +{_fmt_num(valore_energy_a, 2)}"
             delta_pct += 0.08
         elif energy == "B":
-            params["{{CAN_CLASSE_B}}"] = _pct_str(0.04)
+            valore_energy_b = raw_canone * 0.04
+            params["{{CAN_CLASSE_B}}"] = f"({_pct_str(0.04)}) +{_fmt_num(valore_energy_b, 2)}"
             delta_pct += 0.04
         elif energy == "E":
-            params["{{CAN_ENERGY}}"] = _pct_str(-0.02)
+            valore_energy_e = raw_canone * -0.02
+            params["{{CAN_ENERGY}}"] = f"({_pct_str(-0.02)}) { _fmt_num(valore_energy_e, 2)}"
             delta_pct += -0.02
         elif energy == "F":
-            params["{{CAN_ENERGY}}"] = _pct_str(-0.04)
+            valore_energy_f = raw_canone * -0.04
+            params["{{CAN_ENERGY}}"] = f"({_pct_str(-0.04)}) { _fmt_num(valore_energy_f, 2)}"
             delta_pct += -0.04
         elif energy == "G":
-            params["{{CAN_ENERGY}}"] = _pct_str(-0.06)
+            valore_energy_g = raw_canone * -0.06
+            params["{{CAN_ENERGY}}"] = f"({_pct_str(-0.06)}) { _fmt_num(valore_energy_g, 2)}"
             delta_pct += -0.06
 
         durata = cin.get("durata_anni")
@@ -172,26 +196,31 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
             durata = None
 
         if durata == 4:
-            params["{{CAN_DURATA}}"] = _pct_str(0.05)
+            valore_durata_4 = raw_canone * 0.05
+            params["{{CAN_DURATA}}"] = f"({_pct_str(0.05)}) +{_fmt_num(valore_durata_4, 2)}"
             delta_pct += 0.05
         elif durata == 5:
-            params["{{CAN_DURATA}}"] = _pct_str(0.06)
+            valore_durata_5 = raw_canone * 0.06
+            params["{{CAN_DURATA}}"] = f"({_pct_str(0.06)}) +{_fmt_num(valore_durata_5, 2)}"
             delta_pct += 0.06
         elif durata is not None and durata >= 6:
-            params["{{CAN_DURATA}}"] = _pct_str(0.07)
+            valore_durata_6 = raw_canone * 0.07
+            params["{{CAN_DURATA}}"] = f"({_pct_str(0.07)}) +{_fmt_num(valore_durata_6, 2)}"
             delta_pct += 0.07
 
         raw_kind = str(cin.get("contract_kind") or "")
         kind = raw_kind.split(".")[-1].upper()
         if kind == "TRANSITORIO":
-            params["{{CAN_TRANSITORIO}}"] = _pct_str(0.15)
+            valore_transitorio = raw_canone * 0.15
+            params["{{CAN_TRANSITORIO}}"] = f"({_pct_str(0.15)}) +{_fmt_num(valore_transitorio, 2)}"
             delta_pct += 0.15
         elif kind == "STUDENTI":
-            params["{{CAN_STUDENTI}}"] = _pct_str(0.20)
+            valore_studenti = raw_canone * 0.20
+            params["{{CAN_STUDENTI}}"] = f"({_pct_str(0.20)}) +{_fmt_num(valore_studenti, 2)}"
             delta_pct += 0.20
 
-        min_eur = res.get("base_min_euro_mq", base_euro_mq)
-        max_eur = res.get("base_max_euro_mq", base_euro_mq)
+        min_eur = res.get("base_min_euro_mq")
+        max_eur = res.get("base_max_euro_mq")
 
         try:
             mq_f = float(mq or 0.0)
