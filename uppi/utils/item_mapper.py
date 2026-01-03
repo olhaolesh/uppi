@@ -61,6 +61,7 @@ YAML_TO_ITEM_MAP: Dict[str, str] = {
     "ENERGY_CLASS": "energy_class",
     "CANONE_CONTRATTUALE_MENSILE": "canone_contrattuale_mensile",
     "DURATA_ANNI": "durata_anni",
+    "ISTAT": "istat",
 
     # A/B/C/D — бізнес-логіка (pescara2018.py)
     "A1": "a1",

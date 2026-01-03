@@ -46,6 +46,7 @@ class ClientConfig:
     energy_class: str | None = None
     canone_contrattuale_mensile: str | None = None
     durata_anni: str | None = None
+    istat: float | None = None
 
     elements: Dict[str, Any] = field(default_factory=dict)
     extra: Dict[str, Any] = field(default_factory=dict)
@@ -113,6 +114,7 @@ class ClientConfig:
                 raw.get("CANONE_CONTRATTUALE_MENSILE", raw.get("canone_contrattuale_mensile"))
             ),
             durata_anni=_opt_str(raw.get("DURATA_ANNI", raw.get("durata_anni"))),
+            istat = float(raw.get("ISTAT", raw.get("istat"))) if raw.get("ISTAT", raw.get("istat")) is not None else None,
             elements=elements,
             extra=_extract_extra(raw),
         )
@@ -152,6 +154,7 @@ class ClientConfig:
             "energy_class": self.energy_class,
             "canone_contrattuale_mensile": self.canone_contrattuale_mensile,
             "durata_anni": self.durata_anni,
+            "istat": self.istat,
         }
         base.update(self.elements)
         if self.extra:
@@ -213,6 +216,7 @@ _BASE_KEYS = {
     "ENERGY_CLASS",
     "CANONE_CONTRATTUALE_MENSILE",
     "DURATA_ANNI",
+    "ISTAT",
 }
 
 _ELEMENT_KEYS = {f"{prefix}{num}" for prefix in ["A", "B", "C", "D"] for num in range(1, 14)}

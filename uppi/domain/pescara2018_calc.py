@@ -285,6 +285,26 @@ def _get_base_range_euro_mq(
         ) from exc
 
 
+def _normalize_istat_pct(istat: Optional[float]) -> float | None:
+    """
+    Перетворює ISTAT з відсотків у коефіцієнт.
+
+    5.5  -> 0.055
+    0    -> 0.0
+    None -> None
+    """
+    if istat is None:
+        return 0.0
+
+    if istat < 0:
+        raise CanoneCalculationError(
+            f"ISTAT не може бути відʼємним: {istat}"
+        )
+
+    return istat / 100.0
+
+
+
 def compute_base_canone(inp: CanoneInput) -> CanoneResult:
     """
     Базовий розрахунок canone за Accordo Pescara 2018 БЕЗ надбавок
@@ -343,8 +363,12 @@ def compute_base_canone(inp: CanoneInput) -> CanoneResult:
         # Пропорційний рух всередині діапазону згідно з кількістю D
         base_euro_mq = min_eur_mq + delta * (d_cnt / 5.0)
 
+
+    istat_coeff = _normalize_istat_pct(inp.istat)
+    base_euro_mq_istat = base_euro_mq * (1.0 + istat_coeff)
+
     # 6) Канони
-    canone_base_annuo = base_euro_mq * inp.superficie_catastale
+    canone_base_annuo = base_euro_mq_istat * inp.superficie_catastale
     canone_base_mensile = canone_base_annuo / 12.0
 
     result = CanoneResult(
@@ -354,6 +378,8 @@ def compute_base_canone(inp: CanoneInput) -> CanoneResult:
         base_min_euro_mq=min_eur_mq,
         base_max_euro_mq=max_eur_mq,
         base_euro_mq=base_euro_mq,
+        base_euro_mq_istat=base_euro_mq_istat,
+        istat=inp.istat,
         canone_base_annuo=canone_base_annuo,
         canone_base_mensile=canone_base_mensile,
         # Надбавки поки що не застосовуємо

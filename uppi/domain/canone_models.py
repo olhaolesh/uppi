@@ -55,10 +55,11 @@ class CanoneInput:
     count_c: int                              # C1..C7
     count_d: int                              # D1..D13
 
-    arredato: bool = False                    # чи мебльована
+    arredato: float                           # скільки відсотків якщо мебльована MAX uo to +15%
     energy_class: Optional[str] = None        # "A","B","C","D","E","F","G"
     contract_kind: ContractKind = ContractKind.CONCORDATO
     durata_anni: int = 3                      # для майбутніх надбавок за тривалість
+    istat: Optional[float] = None            # індекс ІСТАТ для оновлення canone
 
 
 @dataclass
@@ -76,6 +77,8 @@ class CanoneResult:
     base_min_euro_mq: float                    # з табл. 1
     base_max_euro_mq: float                    # з табл. 1
     base_euro_mq: float                        # після D-елементів
+    base_euro_mq_istat: float
+    istat: float
 
     canone_base_annuo: float                   # base_euro_mq * superficie
     canone_base_mensile: float                 # / 12
@@ -87,3 +90,4 @@ class CanoneResult:
     canone_finale_mq: float                    # €/mq після всіх надбавок
     canone_finale_annuo: float                 # фінальний рік
     canone_finale_mensile: float               # фінальний місяць
+    

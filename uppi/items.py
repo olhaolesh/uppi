@@ -134,6 +134,7 @@ class UppiItem(scrapy.Item):
     energy_class = scrapy.Field()
     canone_contrattuale_mensile = scrapy.Field()
     durata_anni = scrapy.Field()
+    istat = scrapy.Field()
 
     # -------------------------------------------------------------------------
     # Поля для елементів A/B (табличні "галочки" в шаблоні)

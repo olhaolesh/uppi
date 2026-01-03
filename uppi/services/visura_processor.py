@@ -34,7 +34,7 @@ from uppi.services.db_repo import (
 )
 from uppi.services.storage_minio import StorageService
 from uppi.utils.audit import mask_username, safe_unlink, sha256_file, sha256_text
-from uppi.utils.parse_utils import clean_str, safe_float, to_bool_or_none
+from uppi.utils.parse_utils import clean_str, safe_float
 
 from uppi.docs.attestazione_template_filler import fill_attestazione_template, underscored
 from uppi.domain.pescara2018_calc import compute_base_canone, CanoneCalculationError
@@ -280,10 +280,11 @@ class VisuraProcessor:
                             count_b=cnt([f"b{i}" for i in range(1, 6)]),
                             count_c=cnt([f"c{i}" for i in range(1, 8)]),
                             count_d=cnt([f"d{i}" for i in range(1, 14)]),
-                            arredato=bool(to_bool_or_none(adapter.get("arredato"))),
+                            arredato=float(adapter.get("arredato") if adapter.get("arredato") is not None else None),
                             energy_class=clean_str(adapter.get("energy_class")),
                             contract_kind=kind_enum,
                             durata_anni=int(adapter.get("durata_anni") or 3),
+                            istat=float(adapter.get("istat") if float(adapter.get("istat")) is not None else None),
                         )
 
                         canone_snapshot = {
@@ -300,6 +301,7 @@ class VisuraProcessor:
                             "energy_class": can_in.energy_class,
                             "contract_kind": str(can_in.contract_kind),
                             "durata_anni": can_in.durata_anni,
+                            "istat": can_in.istat,
                         }
 
                         can_res = compute_base_canone(can_in)
@@ -309,6 +311,7 @@ class VisuraProcessor:
                             "base_min_euro_mq": getattr(can_res, "base_min_euro_mq", None),
                             "base_max_euro_mq": getattr(can_res, "base_max_euro_mq", None),
                             "base_euro_mq": getattr(can_res, "base_euro_mq", None),
+                            "base_euro_mq_istat": getattr(can_res, "base_euro_mq_istat", None),
                             "canone_base_annuo": getattr(can_res, "canone_base_annuo", None),
                             "canone_finale_annuo": getattr(can_res, "canone_finale_annuo", None),
                             "canone_finale_mensile": getattr(can_res, "canone_finale_mensile", None),
