@@ -27,4 +27,4 @@ output/
 
 # Ignore Repomix files
 repomix.config.json
-repomix.md
+repomix-output.md

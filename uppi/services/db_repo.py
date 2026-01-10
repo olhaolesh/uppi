@@ -196,7 +196,7 @@ def db_upsert_address(conn, addr_data: Dict[str, Any]) -> Optional[int]:
             # Теоретично сюди не має дійти, якщо ON CONFLICT працює коректно
             # Але якщо раптом, пробуємо знайти вручну за хешем (для надійності)
             cur.execute(
-                "SELECT id FROM public.addresses WHERE content_hash = md5(upper(trim(%s)) || '|' || upper(trim(regexp_replace(%s, '\s+', ' ', 'g'))) || '|' || upper(trim(COALESCE(%s, 'SNC'))))", 
+                r"SELECT id FROM public.addresses WHERE content_hash = md5(upper(trim(%s)) || '|' || upper(trim(regexp_replace(%s, '\s+', ' ', 'g'))) || '|' || upper(trim(COALESCE(%s, 'SNC'))))", 
                 (comune, via_full, civico)
             )
             res_fallback = cur.fetchone()
