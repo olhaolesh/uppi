@@ -135,7 +135,6 @@ class UppiSpider(scrapy.Spider):
 
             decision = should_download_visura(
                 force_update=force_update,
-                ttl_days=app_config.visura_cache.ttl_days,
                 db_state=db_state,
                 minio_exists=minio_exists,
             )
