@@ -1,4 +1,5 @@
-# uppi/services/db_repo.py
+"""Містить поточний repository layer і SQL-контракти, на які спирається pipeline."""
+
 from __future__ import annotations
 
 import json
@@ -78,7 +79,7 @@ def resolve_patch_value(yaml_val: Any, db_val: Any, default: Any = None) -> Any:
 
 
 # =========================================================
-# Helpers
+# Допоміжні функції
 # =========================================================
 
 def immobile_from_parsed_dict(data: Dict[str, Any]) -> Immobile:
@@ -129,7 +130,7 @@ def immobile_db_row(imm: Immobile) -> Dict[str, Any]:
 
 
 # =========================================================
-# 1. ADDRESSES (New)
+# 1. ADDRESSES
 # =========================================================
 
 def db_upsert_address(conn, addr_data: Dict[str, Any]) -> Optional[int]:
@@ -146,7 +147,7 @@ def db_upsert_address(conn, addr_data: Dict[str, Any]) -> Optional[int]:
     # Формуємо повну назву вулиці, якщо вона розбита, або беремо вже готову
     via_full = clean_str(addr_data.get("via_full"))
     if not via_full:
-        # Fallback: пробуємо склеїти тип і назву, якщо via_full немає
+        # Запасний варіант: склеюємо тип і назву, якщо via_full не прийшов готовим
         via_type = clean_str(addr_data.get("via_type"))
         via_name = clean_str(addr_data.get("via_name"))
         if via_type and via_name:
@@ -209,7 +210,7 @@ def db_upsert_address(conn, addr_data: Dict[str, Any]) -> Optional[int]:
 
 
 # =========================================================
-# 2. PERSONS (Updated)
+# 2. PERSONS
 # =========================================================
 
 def db_upsert_person(
@@ -243,7 +244,7 @@ def db_upsert_person(
 
 
 # =========================================================
-# 3. VISURE (Metadata)
+# 3. VISURE
 # =========================================================
 
 
@@ -299,6 +300,7 @@ def db_upsert_visura(
 
 @dataclass(frozen=True)
 class VisuraState:
+    """Стислий зріз стану актуальної візури для policy-рішень."""
     cf: str
     pdf_bucket: Optional[str]
     pdf_object: Optional[str]
@@ -306,6 +308,7 @@ class VisuraState:
     id: Optional[int] = None # Додали ID
 
 def fetch_visura_state(conn, cf: str) -> Optional[VisuraState]:
+    """Завантажує поточний стан візури для конкретного орендодавця."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -322,11 +325,11 @@ def fetch_visura_state(conn, cf: str) -> Optional[VisuraState]:
 
 
 # =========================================================
-# 4. IMMOBILI (Master Data - Updated)
+# 4. IMMOBILI
 # =========================================================
 
 
-# 4.1 Upsert Immobile with new fields
+# 4.1 Upsert immobile
 
 def db_upsert_immobile(
     conn, 
@@ -415,7 +418,7 @@ def db_upsert_immobile(
         logger.error(f"[DB] Immobile upsert failed for CF={owner_cf} F={foglio} N={numero} S={sub}: {e}")
         raise
 
-# 4.2 Upsert Immobile Elements
+# 4.2 Upsert елементів immobile
 def db_upsert_immobile_elements(conn, immobile_id: int, adapter: ItemAdapter):
     """
     Розумне оновлення елементів A-D.
@@ -490,8 +493,8 @@ def db_update_immobile_real_address(
     
     # 2. Energy Class (Smart Patch)
     # Тут ми не робимо SELECT, тому що це простий UPDATE.
-    # Але ми можемо використати NULLIF в SQL або логіку в Python.
-    # Оскільки вимога "якщо нема в yml то береться з БД" - це стандартна поведінка
+    # Але можемо використати NULLIF в SQL або логіку в Python.
+    # Вимога "якщо нема в yml, беремо значення з БД" тут досягається тим,
     # UPDATE (якщо ми не чіпаємо колонку, вона лишається старою).
     # Нам треба обробити тільки випадки "Є значення" або "-".
     if energy_class is not None:
@@ -629,7 +632,7 @@ def db_prune_old_immobili_without_contracts(conn, owner_cf: str, keep_ids: List[
 
 
 # =========================================================
-# 5. IMMOBILE ELEMENTS (Details)
+# 5. IMMOBILE ELEMENTS
 # =========================================================
 
 def db_apply_immobile_elements(conn, immobile_id: int, adapter: ItemAdapter) -> None:
@@ -670,7 +673,7 @@ def db_apply_immobile_elements(conn, immobile_id: int, adapter: ItemAdapter) -> 
 
 
 # =========================================================
-# 6. CONTRACTS (Updated)
+# 6. CONTRACTS
 # =========================================================
 
 def db_upsert_contract(conn, immobile_id: int, adapter: ItemAdapter) -> str:
@@ -705,7 +708,7 @@ def db_upsert_contract(conn, immobile_id: int, adapter: ItemAdapter) -> str:
 
     # 2. Підготовка нових значень
     
-    # --- A. CONTRACT_KIND (RESET LOGIC) ---
+    # --- A. CONTRACT_KIND (логіка reset) ---
     # Не дивимось в old_contract. Або YAML, або CONCORDATO.
     kind_raw = clean_str(adapter.get("contract_kind"))
     new_kind = (kind_raw or "CONCORDATO").upper()
@@ -713,7 +716,7 @@ def db_upsert_contract(conn, immobile_id: int, adapter: ItemAdapter) -> str:
         logger.warning(f"[DB] Unknown contract kind '{new_kind}', defaulting to CONCORDATO")
         new_kind = 'CONCORDATO'
 
-    # --- B. ARREDATO (SMART PATCH) ---
+    # --- B. ARREDATO (smart patch) ---
     # YAML "-" -> 0.0 (видалено/пусто). YAML value -> float. YAML empty -> Old DB val.
     raw_arredato = adapter.get("arredato")
     old_arredato = float(old_contract.get("arredato_pct") or 0.0)
@@ -725,7 +728,7 @@ def db_upsert_contract(conn, immobile_id: int, adapter: ItemAdapter) -> str:
     else:
         new_arredato = old_arredato
 
-    # --- C. DURATA_ANNI (SMART PATCH) ---
+    # --- C. DURATA_ANNI (smart patch) ---
     raw_durata = adapter.get("durata_anni")
     old_durata = old_contract.get("durata_anni") # int or None
     
@@ -736,11 +739,11 @@ def db_upsert_contract(conn, immobile_id: int, adapter: ItemAdapter) -> str:
     else:
         new_durata = old_durata
         
-    # Default fallback, якщо і в базі було пусто, і в YAML пусто -> 3 роки (стандарт)
+    # Стандартний fallback: якщо і в базі порожньо, і в YAML порожньо -> 3 роки
     if new_durata is None:
         new_durata = 3
 
-    # --- D. ISTAT (SMART PATCH) ---
+    # --- D. ISTAT (smart patch) ---
     raw_istat = adapter.get("istat")
     old_istat = float(old_contract.get("istat_rate") or 0.0)
     
@@ -751,9 +754,9 @@ def db_upsert_contract(conn, immobile_id: int, adapter: ItemAdapter) -> str:
     else:
         new_istat = old_istat
 
-    # --- E. IGNORE_SURCHARGES (SMART PATCH) ---
+    # --- E. IGNORE_SURCHARGES (smart patch) ---
     # Читаємо з extra або як окреме поле, якщо ви його додали в маппер
-    # Припускаємо, що воно є в adapter (потрібно додати в item_mapper.py, див. нижче)
+    # Припускаємо, що поле вже є в adapter і прийшло з чинного item mapping.
     raw_ignore = adapter.get("ignore_surcharges")
     old_ignore = bool(old_contract.get("ignore_surcharges")) if old_contract else False
     

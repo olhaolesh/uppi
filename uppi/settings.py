@@ -1,3 +1,29 @@
+"""
+Scrapy / Playwright settings для UPPI.
+
+У цьому модулі є browser-critical конфігурація, яку не можна трактувати як
+просте місце для "оптимізацій" під час структурного рефакторингу.
+
+Protected areas:
+- Playwright context для AE / SISTER flow.
+- Підхоплення `state.json` у browser context.
+
+Protected invariant для `state.json`, проти якого мають перевірятися будь-які
+майбутні зміни:
+`fresh session -> save state -> use for direct SISTER -> logout -> delete invalid state`.
+
+Що дозволено тут без окремого high-risk етапу:
+- documentation;
+- characterization tests;
+- safer logging around lifecycle;
+- wrapper/API encapsulation без зміни порядку дій і semantics.
+
+Що заборонено без окремого high-risk етапу:
+- reuse старого `state.json` між новими сесіями;
+- перенесення create/load/delete semantics;
+- зміна browser flow через settings-driven "optimization".
+"""
+
 import os
 
 BOT_NAME = "uppi"
@@ -5,17 +31,17 @@ BOT_NAME = "uppi"
 SPIDER_MODULES = ["uppi.spiders"]
 NEWSPIDER_MODULE = "uppi.spiders"
 
-# === Scrapy Performance Settings ===
+# === Налаштування продуктивності Scrapy ===
 CONCURRENT_REQUESTS = 1
 DOWNLOAD_DELAY = 1
 
 USER_AGENT = None
 
-# === Playwright Settings ===
+# === Налаштування Playwright ===
 PLAYWRIGHT_BROWSER_TYPE = "chromium"
 PLAYWRIGHT_LAUNCH_OPTIONS = {
     # "executable_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "headless": True,
+    "headless": False,
     "args": [
         "--disable-blink-features=AutomationControlled",
         "--disable-gpu",
@@ -46,6 +72,9 @@ PLAYWRIGHT_CONTEXTS = {
         # "storage_state": "state.json",
     }
 }
+# Protected invariant: тут лише підхоплюється вже створений session state.
+# Цю точку не можна перетворювати на механізм повторного використання старого
+# стейту або змінювати create/load/delete semantics навколо `state.json`.
 if os.path.exists("state.json"):
     PLAYWRIGHT_CONTEXTS["default"]["storage_state"] = "state.json"
 
@@ -55,14 +84,14 @@ DOWNLOAD_HANDLERS = {
     "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
 }
 
-# Obey robots.txt rules
+# robots.txt у цьому проєкті не застосовується
 ROBOTSTXT_OBEY = False
 
-# Configure item pipelines
+# Налаштування item pipelines
 ITEM_PIPELINES = {
     "uppi.pipelines.UppiPipeline": 300,
 }
 
-# Set settings whose default value is deprecated to a future-proof value
+# Фіксуємо сучасне значення reactor і кодування фідів
 TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
 FEED_EXPORT_ENCODING = "utf-8"

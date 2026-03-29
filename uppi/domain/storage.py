@@ -1,4 +1,4 @@
-"""Utils for file storage and path management."""
+"""Локальні шляхи й canonical naming rules для PDF/DOCX-артефактів проєкту."""
 
 from __future__ import annotations
 

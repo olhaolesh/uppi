@@ -1,3 +1,5 @@
+"""Парсить текстові адреси з візури у структурований набір компонентів."""
+
 from __future__ import annotations
 
 import re
@@ -6,7 +8,7 @@ from typing import Dict, Optional
 
 
 # ----------------------------
-# Data model
+# Модель даних
 # ----------------------------
 
 @dataclass(frozen=True)
@@ -26,6 +28,7 @@ class AddressParts:
     indirizzo_raw: str
 
     def as_dict(self) -> Dict[str, Optional[str]]:
+        """Повертає адресу як словник для подальшого enrich/upsert у pipeline."""
         return {
             "via_type": self.via_type,
             "via_name": self.via_name,
@@ -38,7 +41,7 @@ class AddressParts:
 
 
 # ----------------------------
-# Street types
+# Типи вулиць
 # ----------------------------
 
 _STREET_TYPES = {
@@ -74,7 +77,7 @@ _STREET_TYPE_REGEX = re.compile(
 
 
 # ----------------------------
-# Address components (tail only!)
+# Компоненти адреси з «хвоста» рядка
 # ----------------------------
 
 _COMPONENT_PATTERNS = {
@@ -89,7 +92,7 @@ _COMPONENT_PATTERNS = {
 
 
 # ----------------------------
-# Civico (house number)
+# Номер будинку
 # ----------------------------
 
 # Числовий номер: група (1) ЗАВЖДИ номер
@@ -109,7 +112,7 @@ _SNC_REGEX = re.compile(r"\b(N\.?\s*)?SNC\b", re.IGNORECASE)
 
 
 # ----------------------------
-# Parser
+# Парсер
 # ----------------------------
 
 def parse_address(text: str) -> AddressParts:
@@ -132,7 +135,7 @@ def parse_address(text: str) -> AddressParts:
     working = raw
 
     # ----------------------------
-    # 1. Street type + base name
+    # 1. Тип вулиці + базова назва
     # ----------------------------
 
     via_type: Optional[str] = None
@@ -155,7 +158,7 @@ def parse_address(text: str) -> AddressParts:
     working_tail = via_name
 
     # ----------------------------
-    # 2. Civico: SNC
+    # 2. Випадок SNC
     # ----------------------------
 
     via_num: Optional[str] = None
@@ -166,7 +169,7 @@ def parse_address(text: str) -> AddressParts:
         via_num = None
     else:
         # ----------------------------
-        # 3. Civico: numeric
+        # 3. Числовий номер будинку
         # ----------------------------
         for regex in _CIVICO_REGEXES:
             m = regex.search(working_tail)
@@ -178,7 +181,7 @@ def parse_address(text: str) -> AddressParts:
             break
 
     # ----------------------------
-    # 4. Other components
+    # 4. Інші компоненти
     # ----------------------------
 
     scala: Optional[str] = None
@@ -202,7 +205,7 @@ def parse_address(text: str) -> AddressParts:
         working_tail = pattern.sub(" ", working_tail, count=1).strip()
 
     # ----------------------------
-    # 5. Final cleanup
+    # 5. Фінальне прибирання
     # ----------------------------
 
     via_name = re.sub(r"\s{2,}", " ", working_tail).strip() or None

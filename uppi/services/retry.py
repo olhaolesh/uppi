@@ -1,5 +1,8 @@
 """
-Не використовується в проєкті був замінений на повторні спроби від бібліотеки tenacity
+Legacy-хелпер для повторних спроб.
+
+У production-потоці проєкт уже використовує `tenacity`, але модуль залишено
+для сумісності та локальних утиліт, які ще можуть його імпортувати.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ def retry(
     logger: Optional[object] = None,
     context: str = "",
 ):
+    """Запускає callable з простою retry/backoff-логікою."""
     delay = base_delay
     for attempt in range(1, attempts + 1):
         try:

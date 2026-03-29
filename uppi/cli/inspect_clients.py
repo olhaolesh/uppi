@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
+"""CLI-утиліта для огляду поточного стану клієнтів у БД за актуальною схемою."""
+
 import argparse
 import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from decouple import config
-import psycopg
-from psycopg.rows import dict_row
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
-from uppi.domain.clients import load_clients
+from uppi.domain.clients import CLIENTS_FILE, load_clients
 
 
 # =========================================================
@@ -21,16 +23,14 @@ DB_NAME = config("DB_NAME", default="uppi_db")
 DB_USER = config("DB_USER", default="uppi_user")
 DB_PASSWORD = config("DB_PASSWORD", default="uppi_password")
 
-UPPI_CLIENTS_YAML = config("UPPI_CLIENTS_YAML", default="clients/clients.yml")
-
-
 # =========================================================
 # helpers
 # =========================================================
 
-def get_conn() -> psycopg.Connection:
+def get_conn():
+    """Повертає підключення до PostgreSQL для support CLI."""
     try:
-        return psycopg.connect(
+        return psycopg2.connect(
             host=DB_HOST,
             port=DB_PORT,
             dbname=DB_NAME,
@@ -42,6 +42,7 @@ def get_conn() -> psycopg.Connection:
 
 
 def fmt(value: Any) -> str:
+    """Нормалізує значення для безпечного текстового виводу в CLI."""
     if value is None:
         return "—"
     if isinstance(value, datetime):
@@ -52,6 +53,7 @@ def fmt(value: Any) -> str:
 
 
 def print_kv(key: str, value: Any, indent: int = 2):
+    """Друкує одну пару ключ-значення у вирівняному вигляді."""
     pad = " " * indent
     print(f"{pad}{key:30}: {fmt(value)}")
 
@@ -61,7 +63,8 @@ def print_kv(key: str, value: Any, indent: int = 2):
 # =========================================================
 
 def fetch_person(conn, cf: str) -> Optional[Dict[str, Any]]:
-    with conn.cursor(row_factory=dict_row) as cur:
+    """Завантажує базову інформацію про особу за CF."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
             SELECT cf, name, surname, created_at, updated_at
@@ -74,12 +77,13 @@ def fetch_person(conn, cf: str) -> Optional[Dict[str, Any]]:
 
 
 def fetch_visura(conn, cf: str) -> Optional[Dict[str, Any]]:
-    with conn.cursor(row_factory=dict_row) as cur:
+    """Повертає запис про візуру орендодавця за актуальним CF-ключем."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
             SELECT *
             FROM visure
-            WHERE cf = %s
+            WHERE locatore_cf = %s
             """,
             (cf,),
         )
@@ -87,13 +91,20 @@ def fetch_visura(conn, cf: str) -> Optional[Dict[str, Any]]:
 
 
 def fetch_immobili(conn, cf: str) -> List[Dict[str, Any]]:
-    with conn.cursor(row_factory=dict_row) as cur:
+    """Повертає нерухомість власника разом з поточною проєкцією адреси."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
-            SELECT *
-            FROM immobili
-            WHERE visura_cf = %s
-            ORDER BY immobile_comune, foglio, numero, sub, id
+            SELECT
+                i.*,
+                COALESCE(ra.comune, va.comune) AS immobile_comune,
+                COALESCE(ra.via_full, va.via_full) AS immobile_via,
+                COALESCE(ra.civico, va.civico) AS immobile_civico
+            FROM immobili i
+            LEFT JOIN addresses va ON i.visura_address_id = va.id
+            LEFT JOIN addresses ra ON i.real_address_id = ra.id
+            WHERE i.owner_cf = %s
+            ORDER BY COALESCE(ra.comune, va.comune), i.foglio, i.numero, i.sub, i.id
             """,
             (cf,),
         )
@@ -101,7 +112,8 @@ def fetch_immobili(conn, cf: str) -> List[Dict[str, Any]]:
 
 
 def fetch_contracts(conn, immobile_id: int) -> List[Dict[str, Any]]:
-    with conn.cursor(row_factory=dict_row) as cur:
+    """Завантажує контракти, прив’язані до конкретного immobile."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
             SELECT *
@@ -114,22 +126,42 @@ def fetch_contracts(conn, immobile_id: int) -> List[Dict[str, Any]]:
         return cur.fetchall()
 
 
-def fetch_contract_parties(conn, contract_id: str) -> List[Dict[str, Any]]:
-    with conn.cursor(row_factory=dict_row) as cur:
+def fetch_contract_participants(conn, contract_id: str) -> List[Dict[str, Any]]:
+    """Будує список сторін договору з поточної схеми без legacy-таблиць."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
-            SELECT cp.role, p.cf, p.name, p.surname
-            FROM contract_parties cp
-            JOIN persons p ON p.cf = cp.person_cf
-            WHERE cp.contract_id = %s
+            SELECT
+                'LOCATORE' AS role,
+                p_own.cf,
+                p_own.name,
+                p_own.surname
+            FROM contracts c
+            JOIN immobili i ON i.id = c.immobile_id
+            LEFT JOIN persons p_own ON p_own.cf = i.owner_cf
+            WHERE c.id = %s
+              AND p_own.cf IS NOT NULL
+
+            UNION ALL
+
+            SELECT
+                'CONDUTTORE' AS role,
+                p_cond.cf,
+                p_cond.name,
+                p_cond.surname
+            FROM contracts c
+            LEFT JOIN persons p_cond ON p_cond.cf = c.conduttore_cf
+            WHERE c.id = %s
+              AND p_cond.cf IS NOT NULL
             """,
-            (contract_id,),
+            (contract_id, contract_id),
         )
         return cur.fetchall()
 
 
 def fetch_canone(conn, contract_id: str) -> List[Dict[str, Any]]:
-    with conn.cursor(row_factory=dict_row) as cur:
+    """Завантажує історію розрахунків канону для контракту."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
             SELECT *
@@ -142,15 +174,30 @@ def fetch_canone(conn, contract_id: str) -> List[Dict[str, Any]]:
         return cur.fetchall()
 
 
-def fetch_overrides(conn, contract_id: str) -> Optional[Dict[str, Any]]:
-    with conn.cursor(row_factory=dict_row) as cur:
+def fetch_address_sources(conn, immobile_id: int) -> Optional[Dict[str, Any]]:
+    """Показує, які адресні джерела прив’язані до immobile у поточній схемі."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
             SELECT *
-            FROM contract_overrides
-            WHERE contract_id = %s
+            FROM (
+                SELECT
+                    i.id AS immobile_id,
+                    i.visura_address_id,
+                    i.real_address_id,
+                    va.comune AS visura_comune,
+                    va.via_full AS visura_via_full,
+                    va.civico AS visura_civico,
+                    ra.comune AS real_comune,
+                    ra.via_full AS real_via_full,
+                    ra.civico AS real_civico
+                FROM immobili i
+                LEFT JOIN addresses va ON va.id = i.visura_address_id
+                LEFT JOIN addresses ra ON ra.id = i.real_address_id
+                WHERE i.id = %s
+            ) AS address_sources
             """,
-            (contract_id,),
+            (immobile_id,),
         )
         return cur.fetchone()
 
@@ -166,16 +213,17 @@ def print_block_1_yaml_hint(cf: str, imm: Dict[str, Any]):
     print("  🔹 BLOCK 1 — Дані для clients.yml")
     print_kv("LOCATORE_CF", cf, 4)
     print_kv("IMMOBILE_COMUNE", imm.get("immobile_comune"), 4)
-    print_kv("IMMOBILE_FOGLIO", imm.get("foglio"), 4)
-    print_kv("IMMOBILE_NUMERO", imm.get("numero"), 4)
-    print_kv("IMMOBILE_SUB", imm.get("sub"), 4)
+    print_kv("FOGLIO", imm.get("foglio"), 4)
+    print_kv("NUMERO", imm.get("numero"), 4)
+    print_kv("SUB", imm.get("sub"), 4)
 
 
 def print_block_2_full_dump(
     imm: Dict[str, Any],
     contracts: List[Dict[str, Any]],
-    conn: psycopg.Connection,
+    conn,
 ):
+    """Друкує повний DB-oriented dump immobile, contracts і пов’язаних сутностей."""
     print("  🔸 BLOCK 2 — Вся інформація з БД")
 
     print("    ▸ IMMOBILE")
@@ -187,16 +235,16 @@ def print_block_2_full_dump(
         return
 
     for cidx, contract in enumerate(contracts, start=1):
-        print(f"    ▸ CONTRACT [{cidx}] {contract['contract_id']}")
+        print(f"    ▸ CONTRACT [{cidx}] {contract.get('id')}")
         for k, v in contract.items():
             print_kv(k, v, 8)
 
-        parties = fetch_contract_parties(conn, contract["contract_id"])
+        parties = fetch_contract_participants(conn, contract["id"])
         print("        ▸ PARTIES")
         for p in parties:
             print_kv(f"{p['role']}", f"{p['name']} {p['surname']} ({p['cf']})", 10)
 
-        canoni = fetch_canone(conn, contract["contract_id"])
+        canoni = fetch_canone(conn, contract["id"])
         if canoni:
             print("        ▸ CANONE_CALCOLI")
             for calc in canoni:
@@ -205,10 +253,10 @@ def print_block_2_full_dump(
         else:
             print("        ▸ CANONE_CALCOLI: —")
 
-        overrides = fetch_overrides(conn, contract["contract_id"])
-        if overrides:
-            print("        ▸ CONTRACT_OVERRIDES")
-            for k, v in overrides.items():
+        address_sources = fetch_address_sources(conn, imm["id"])
+        if address_sources:
+            print("        ▸ ADDRESS_SOURCES")
+            for k, v in address_sources.items():
                 print_kv(k, v, 10)
 
 
@@ -217,6 +265,7 @@ def print_block_2_full_dump(
 # =========================================================
 
 def main():
+    """Запускає CLI-огляд по одному або всіх CF із clients.yml."""
     parser = argparse.ArgumentParser(
         description=(
             "Огляд усієї наявної інформації по клієнтах з БД "
@@ -247,7 +296,7 @@ def main():
         # CF не передали → беремо з clients.yml
         rows = load_clients()
         if not rows:
-            print(f"❌ clients.yml порожній або не знайдений ({UPPI_CLIENTS_YAML})")
+            print(f"❌ clients.yml порожній або не знайдений ({CLIENTS_FILE})")
             return
 
         for row in rows:

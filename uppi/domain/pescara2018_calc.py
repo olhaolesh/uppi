@@ -1,3 +1,5 @@
+"""Реалізує правила розрахунку канону за Accordo Pescara 2018."""
+
 # uppi/domain/pescara2018_calc.py
 
 from __future__ import annotations

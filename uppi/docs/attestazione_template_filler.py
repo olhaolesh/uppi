@@ -1,3 +1,5 @@
+"""Заповнює DOCX-шаблон атестації значеннями з підготовленого словника placeholder-ів."""
+
 import shutil
 import re
 from pathlib import Path

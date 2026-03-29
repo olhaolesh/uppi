@@ -1,4 +1,5 @@
-# uppi/utils/parse_utils.py
+"""Базові утиліти для нормалізації рядків, чисел, дат і JSON-серіалізації."""
+
 from __future__ import annotations
 from decimal import Decimal
 from enum import Enum
@@ -9,6 +10,7 @@ from typing import Any, Optional
 
 
 def clean_str(v: Any) -> Optional[str]:
+    """Обрізає рядок і повертає None для порожнього значення."""
     if v is None:
         return None
     s = str(v).replace("\n", " ").strip()
@@ -22,6 +24,7 @@ def clean_sub(v: Any) -> str:
     return s  # може бути ''
 
 def safe_float(v: Any) -> Optional[float]:
+    """Безпечно перетворює рядок або число на float."""
     if v is None:
         return None
     if isinstance(v, (int, float)):
@@ -38,6 +41,7 @@ def safe_float(v: Any) -> Optional[float]:
 
 
 def to_bool_or_none(v: Any) -> Optional[bool]:
+    """Інтерпретує типові truthy/falsy значення або повертає None."""
     if v is None:
         return None
     if isinstance(v, bool):
@@ -79,7 +83,6 @@ def parse_date(v: Any) -> Optional[date]:
     return None
 
 
-# JSON encoder that converts Decimal and Enum to JSON-serializable formats
 def prepare_for_json(obj):
     """Рекурсивно конвертує Decimal та Enum у формати, придатні для JSON."""
     if isinstance(obj, dict):
@@ -94,8 +97,6 @@ def prepare_for_json(obj):
         return obj.isoformat()
     return obj
 
-
-# Розділення повного імені на Прізвище та Ім'я
 def split_full_name(full_name: str) -> tuple[str, str]:
     """
     Розділяє повне ім'я на Прізвище та Ім'я.
@@ -111,7 +112,7 @@ def split_full_name(full_name: str) -> tuple[str, str]:
     if len(parts) == 1:
         return parts[0], "" # Тільки прізвище
         
-    # Найчастіше в документах першим йде Прізвище (Cognome), потім Ім'я (Nome)
-    # Ми беремо перше слово як прізвище, решту як ім'я. 
+    # Поточна евристика зберігає сумісність із чинним pipeline: перше слово
+    # вважається прізвищем, решта — ім'ям.
     # Або навпаки, залежно від вашого стандарту.
     return parts[0], " ".join(parts[1:])

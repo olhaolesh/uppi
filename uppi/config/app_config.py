@@ -1,3 +1,5 @@
+"""Прості dataclass-конфіги для bootstrap-етапу застосунку."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,6 +10,7 @@ from decouple import config
 
 @dataclass(frozen=True)
 class DatabaseConfig:
+    """Параметри підключення до PostgreSQL."""
     host: str
     port: int
     name: str
@@ -19,11 +22,13 @@ class DatabaseConfig:
 
 @dataclass(frozen=True)
 class AppConfig:
+    """Агрегує верхньорівневі налаштування застосунку."""
     database: DatabaseConfig
 
 
     @staticmethod
     def _parse_int(value: str | None) -> Optional[int]:
+        """Перетворює необов’язковий рядок на ціле число або None."""
         if value is None:
             return None
         value = str(value).strip()
@@ -34,6 +39,7 @@ class AppConfig:
     @classmethod
     def from_env(cls) -> "AppConfig":
 
+        """Створює конфіг застосунку з поточних env-параметрів."""
         db = DatabaseConfig(
             host=config("DB_HOST", default="localhost"),
             port=int(config("DB_PORT", default="5432")),

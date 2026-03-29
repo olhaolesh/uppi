@@ -4,6 +4,13 @@ Helper для завантаження PDF-візури з SISTER.
 Тут тільки очікування download-об'єкта і збереження файлу
 в downloads/{CF}/VISURA_{CF}.pdf — за тим самим шляхом,
 який повертає domain.storage.get_visura_path().
+
+Protected invariants:
+- visura download sequence є browser-critical;
+- зв'язка `expect_download -> click 'Apri' -> save_as` не підлягає
+  "оптимізації" без окремого high-risk етапу;
+- allowed work тут обмежується documentation / characterization /
+  safer logging / wrapper without semantic change.
 """
 
 from typing import Any
@@ -27,11 +34,15 @@ async def download_document(
     Шлях формується через get_visura_path(codice_fiscale), щоб бути
     синхронним з pipelines/storage/visura_pdf_parser.
 
+    Важливо:
+    - selector order і download trigger тут треба зберігати behavior-compatible;
+    - ця функція не є місцем для зміни visura download contract.
+
     Повертає:
         повний шлях до файлу (str), якщо успішно
         None — якщо сталася помилка або download не відбувся
     """
-    # формуємо canonical path через storage
+    # Формуємо canonical path через domain.storage, щоб naming лишався стабільним
     visura_path: Path = get_visura_path(codice_fiscale)
     downloads_dir = visura_path.parent
 

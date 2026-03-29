@@ -1,6 +1,5 @@
-# uppi/items.py
 """
-Scrapy items for the Uppi project.
+Scrapy item-и проєкту UPPI.
 
 UppiItem — основний контейнер для даних одного "клієнт + візура".
 
@@ -37,7 +36,7 @@ class UppiItem(scrapy.Item):
     codice_fiscale = scrapy.Field()
 
     # Параметри запиту до SISTER з clients.yml
-    # (мають дефолти у Client/clients.yml)
+    # (мають дефолти у clients.yml)
     comune = scrapy.Field()          # COMUNE / назва комуни
     tipo_catasto = scrapy.Field()    # TIPO_CATASTO (наприклад, "F")
     ufficio_label = scrapy.Field()   # UFFICIO_PROVINCIALE_LABEL → ufficio_label
@@ -82,7 +81,7 @@ class UppiItem(scrapy.Item):
     locatore_civico = scrapy.Field()
 
     # -------------------------------------------------------------------------
-    # Дані про нерухомість (immobile) — з YAML або як fallback до парсингу PDF
+    # Дані про нерухомість (immobile) — з YAML або як запасний варіант із парсингу PDF
     # -------------------------------------------------------------------------
 
     immobile_comune = scrapy.Field()
@@ -127,8 +126,9 @@ class UppiItem(scrapy.Item):
     agenzia_entrate_sede = scrapy.Field()
 
     # -------------------------------------------------------------------------
-    # Поля для заповнення DOCX-шаблону: Тип договору, Мебльованість, Енергоклас, Фактичний canone з договору, Тривалість договору.
-    # відсоток італійських податків (ISTAT) на поточний рік, прапорець ігнорування надбавок ignore_surcharges.
+    # Поля для заповнення DOCX-шаблону: тип договору, мебльованість,
+    # енергоклас, фактичний canone з договору, тривалість, ISTAT і
+    # прапорець ігнорування надбавок ignore_surcharges.
     # -------------------------------------------------------------------------
     contract_kind = scrapy.Field()
     arredato = scrapy.Field()

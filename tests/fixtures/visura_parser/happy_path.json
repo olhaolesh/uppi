@@ -1,0 +1,19 @@
+{
+  "pages": [
+    {
+      "text": "ROSSI MARIO (CF: RSSMRA80A01H501Z)\nImmobili siti nel Comune di PESCARA (Codice G482)\n",
+      "blocks": [
+        [0, 0, 100, 20, "ROSSI MARIO (CF: RSSMRA80A01H501Z)\n", 0, 0]
+      ]
+    }
+  ],
+  "tables": {
+    "1": [
+      [
+        ["DATI IDENTIFICATIVI", "", "", "", "", "", "", "", "", "", "", ""],
+        ["", "Foglio", "Numero", "Sub", "Indirizzo", "Zona cens.", "Microzona", "Categoria", "", "Classe Consistenza", "Rendita", "Superficie catastale"],
+        ["1", "12", "345", "7", "VIA ROMA 10 SCALA A INTERNO 2 P. 3", "2", "5", "A/2", "3", "5 vani", "Euro 123,45", "Totale: 98,7 Totale escluse aree scoperte**: 90,1"]
+      ]
+    ]
+  }
+}

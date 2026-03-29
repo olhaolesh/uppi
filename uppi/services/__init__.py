@@ -1,3 +1,5 @@
+"""Публічні сервісні entry points, які використовують spider і pipeline."""
+
 from uppi.services.attestazione_generator import build_template_params
 from uppi.services.db_repo import VisuraState
 from uppi.services.storage_minio import StorageService

@@ -1,3 +1,5 @@
+"""Нормалізує записи з clients.yml у типізований конфіг клієнта."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -6,6 +8,7 @@ from typing import Any, Dict
 
 @dataclass(frozen=True)
 class ClientConfig:
+    """Структурований опис одного клієнта та його override-параметрів."""
     locatore_cf: str
     comune: str
     tipo_catasto: str
@@ -60,6 +63,7 @@ class ClientConfig:
         default_tipo_catasto: str,
         default_ufficio_label: str,
     ) -> "ClientConfig":
+        """Будує ClientConfig із сирого YAML-словника."""
         if not isinstance(raw, dict):
             raise ValueError("Client entry must be a mapping")
 
@@ -120,6 +124,7 @@ class ClientConfig:
         )
 
     def to_item_dict(self) -> Dict[str, Any]:
+        """Перетворює конфіг у словник, сумісний з item/pipeline layer."""
         base = {
             "locatore_cf": self.locatore_cf,
             "comune": self.comune,
@@ -163,6 +168,7 @@ class ClientConfig:
 
 
 def _opt_str(value: Any) -> str | None:
+    """Повертає обрізаний рядок або None для порожніх значень."""
     if value is None:
         return None
     value = str(value).strip()
@@ -170,6 +176,7 @@ def _opt_str(value: Any) -> str | None:
 
 
 def _parse_bool(value: Any) -> bool:
+    """Розпізнає поширені truthy/falsy рядки й булеві значення."""
     if isinstance(value, bool):
         return value
     if value is None:
@@ -178,6 +185,7 @@ def _parse_bool(value: Any) -> bool:
 
 
 def _extract_extra(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Повертає unknown YAML-поля, які не входять до canonical contract."""
     known = {k.upper() for k in _BASE_KEYS} | _ELEMENT_KEYS
     return {k: v for k, v in raw.items() if str(k).strip().upper() not in known}
 

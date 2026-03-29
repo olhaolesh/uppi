@@ -1,3 +1,5 @@
+"""Policy-рішення: чи треба повторно завантажувати візуру з SISTER."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,6 +11,7 @@ from uppi.services.db_repo import VisuraState
 
 @dataclass(frozen=True)
 class VisuraDecision:
+    """Результат policy-перевірки щодо повторного скачування візури."""
     should_download: bool
     reason: str
 
@@ -20,6 +23,7 @@ def should_download_visura(
     minio_exists: bool,
     now: Optional[datetime] = None,
 ) -> VisuraDecision:
+    """Повертає рішення про повторне скачування за поточним станом."""
     if force_update:
         return VisuraDecision(True, "force_update_visura")
 

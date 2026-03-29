@@ -1,3 +1,5 @@
+"""Довідкові таблиці й мапінги для розрахунку канону Pescara 2018."""
+
 # Схема:
 # BASE_RANGES[zona][tipologia][subfascia] = (min_eur_mq, max_eur_mq)
 

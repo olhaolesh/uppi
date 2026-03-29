@@ -1,8 +1,11 @@
+"""Одноразова утиліта для конвертації PDF у грубий Markdown для аналізу."""
+
 from pathlib import Path
 import pdfplumber
 
 
 def pdf_to_markdown(pdf_path: str, md_path: str) -> None:
+    """Перетворює сторінки PDF і таблиці у простий Markdown-файл."""
     pdf_path = Path(pdf_path)
     md_path = Path(md_path)
 

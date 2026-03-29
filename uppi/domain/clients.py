@@ -1,3 +1,5 @@
+"""Читає clients.yml і готує item-сумісні словники для spider layer."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,6 +21,7 @@ DEFAULT_UFFICIO = "PESCARA Territorio"
 
 
 def _parse_yaml(path: Path) -> List[Dict[str, Any]]:
+    """Завантажує YAML-файл клієнтів і повертає список нормалізованих записів."""
     clients: List[Dict[str, Any]] = []
 
     if not path.exists():
@@ -74,4 +77,5 @@ def _parse_yaml(path: Path) -> List[Dict[str, Any]]:
 
 
 def load_clients() -> List[Dict[str, Any]]:
+    """Завантажує клієнтів із canonical файлу clients/clients.yml."""
     return _parse_yaml(CLIENTS_FILE)

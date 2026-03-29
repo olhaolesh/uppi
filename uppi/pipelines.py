@@ -1,6 +1,9 @@
+"""Scrapy pipeline, що делегує non-browser обробку сервісному процесору."""
+
 # uppi/pipelines.py
 from __future__ import annotations
 
+from uppi.logging_config import configure_uppi_logging
 from uppi.services.visura_processor import VisuraProcessor
 
 
@@ -10,7 +13,10 @@ class UppiPipeline:
     """
 
     def __init__(self):
+        """Піднімає logging foundation і створює сервіс обробки item-ів."""
+        configure_uppi_logging()
         self.processor = VisuraProcessor()
 
     def process_item(self, item, spider):
+        """Передає item у сервіс без додаткової логіки в самому pipeline."""
         return self.processor.process_item(item, spider)

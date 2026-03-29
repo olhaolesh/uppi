@@ -1,9 +1,12 @@
+"""Dataclass-модель нерухомості, яку зшивають parser, БД і DOCX-пайплайн."""
+
 from dataclasses import dataclass
 from typing import Optional
 
 @dataclass
 class Immobile:
     # --- З таблиці нерухомості у візурі ---
+    """Єдине прикладне представлення нерухомості в пам’яті під час обробки."""
     table_num_immobile: str | None = None
     sez_urbana: str | None = None
     foglio: str | None = None

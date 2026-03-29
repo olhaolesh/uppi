@@ -1,3 +1,5 @@
+"""Тести для парсера адрес і його поточного контракту."""
+
 import pytest
 
 from uppi.parsers.address_parser import parse_address

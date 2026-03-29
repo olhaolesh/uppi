@@ -4,6 +4,14 @@ Playwright-хелпери для навігації всередині SISTER п
 Тут:
 - відкриття SISTER у новій вкладці з "I tuoi preferiti",
 - перехід до форми "Visure catastali" та пошук по codice fiscale.
+
+Protected invariants:
+- direct SISTER transition є browser-critical і не підлягає "спрощенню".
+- selector order і wait/click sequence тут треба зберігати behavior-compatible.
+- збереження `storage_state` у `state.json` є частиною захищеного контракту:
+  `fresh session -> save state -> use for direct SISTER -> logout -> delete invalid state`.
+- дозволені лише documentation / characterization / safer logging /
+  wrapper without semantic change.
 """
 
 from typing import Any, Optional
@@ -13,7 +21,7 @@ from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from uppi.ae.uppi_selectors import UppiSelectors
 
-# URL сторінки "Visure catastali" (безпосередня форма пошуку)
+# URL сторінки «Visure catastali» для прямого переходу до форми пошуку
 SISTER_VISURE_CATASTALI_URL = config("SISTER_VISURE_CATASTALI_URL")
 
 
@@ -34,6 +42,11 @@ async def open_sister_service(
     4. Закрити стару AE-сторінку (ae_page).
     5. Обробити вітальне вікно SISTER і зберегти storage_state в state.json.
 
+    Важливо:
+    - direct SISTER open flow тут вважається protected;
+    - крок з `storage_state(path="state.json")` не можна переносити або
+      перепридумувати як persistent-state reuse.
+
     Повертає:
         sister_page (Page) або None у випадку фейлу.
     """
@@ -53,14 +66,14 @@ async def open_sister_service(
     sister_page: Optional[Page] = None
 
     try:
-        # Чекаємо профіль та секцію "I tuoi preferiti"
+        # Чекаємо профіль і секцію «I tuoi preferiti»
         await ae_page.wait_for_selector(UppiSelectors.PROFILE_INFO, timeout=10_000)
         await ae_page.wait_for_selector(UppiSelectors.TUOI_PREFERITI_SECTION, timeout=10_000)
 
         await ae_page.locator(UppiSelectors.TUOI_PREFERITI_SECTION).click()
         logger.info("[OPEN_SISTER] 'I tuoi preferiti' section opened")
 
-        # Відкриваємо SISTER у новій вкладці (middle-click)
+        # Відкриваємо SISTER у новій вкладці через middle-click
         try:
             async with ae_page.context.expect_page() as ctx:
                 await ae_page.click(UppiSelectors.VAI_AL_SERVIZIO_BUTTON, button="middle")
@@ -84,7 +97,7 @@ async def open_sister_service(
         logger.exception("[OPEN_SISTER] Unexpected error while preparing to open SISTER: %s", e)
         return None
 
-    # Обробляємо стартову сторінку SISTER: кнопка "Conferma" + збереження state.json
+        # Обробляємо стартову сторінку SISTER: кнопка «Conferma» і збереження state.json
     try:
         await sister_page.wait_for_selector(UppiSelectors.CONFERMA_BUTTON, timeout=10_000)
         await sister_page.wait_for_timeout(1_000)
@@ -93,7 +106,9 @@ async def open_sister_service(
 
         await sister_page.wait_for_timeout(3_000)
 
-        # Зберігаємо storage_state для повторного використання
+        # Protected invariant: тут фіксується session state для прямого переходу
+        # в SISTER у межах поточної сесії. Цю точку не можна перетворювати на
+        # reusable persistent state або переносити без окремого high-risk аналізу.
         try:
             await sister_page.context.storage_state(path="state.json")
             logger.info("[OPEN_SISTER] storage_state saved to state.json")
@@ -140,7 +155,7 @@ async def navigate_to_visure_catastali(
         await sister_page.goto(SISTER_VISURE_CATASTALI_URL, wait_until="networkidle", timeout=60_000)
         logger.debug("[NAVIGATE] Opened Visure catastali URL: %s", SISTER_VISURE_CATASTALI_URL)
 
-        # Можливе вікно "Conferma Lettura"
+        # Може з'явитися вікно «Conferma Lettura»
         try:
             await sister_page.wait_for_selector(UppiSelectors.CONFERMA_LETTURA, timeout=2_000)
             await sister_page.click(UppiSelectors.CONFERMA_LETTURA)
@@ -208,7 +223,7 @@ async def navigate_to_visure_catastali(
             logger.exception("[NAVIGATE] Error while selecting omonimi: %s", e)
             return False
 
-        # Переходимо до "Visura per soggetto"
+        # Переходимо до «Visura per soggetto»
         try:
             await sister_page.click(UppiSelectors.VISURA_PER_SOGGECTO_BUTTON)
             logger.info("[NAVIGATE] 'Visura per soggetto' clicked for CF=%s", codice_fiscale)

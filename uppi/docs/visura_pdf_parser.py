@@ -1,3 +1,5 @@
+"""Compatibility shim для імпорту VisuraParser зі старого шляху uppi.docs."""
+
 # uppi/docs/visura_pdf_parser.py
 from uppi.parsers.visura_pdf_parser import VisuraParser
 

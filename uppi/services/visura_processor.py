@@ -1,4 +1,5 @@
-# uppi/services/visura_processor.py
+"""Основний non-browser orchestrator, що зшиває parser, БД, storage і DOCX."""
+
 from __future__ import annotations
 
 import logging
@@ -95,7 +96,9 @@ def filter_immobiles_by_yaml(immobiles: List[Tuple[int, Immobile]], adapter: Ite
 
 
 class VisuraProcessor:
+    """Зшиває parser, БД, storage і DOCX у один non-browser pipeline."""
     def __init__(self, storage: Optional[ObjectStorage] = None, template_path: Optional[Path] = None):
+        """Створює процесор із storage-адаптерами та шляхом до шаблону."""
         self.storage_service = StorageService(storage)
         self.storage = storage or ObjectStorage()
         self.template_path = template_path or (
@@ -103,6 +106,7 @@ class VisuraProcessor:
         )
 
     def process_item(self, item, spider):
+        """Повністю обробляє один item після етапу browser download."""
         adapter = ItemAdapter(item)
         locatore_cf = clean_str(adapter.get("locatore_cf") or adapter.get("codice_fiscale"))
 
@@ -116,7 +120,7 @@ class VisuraProcessor:
         try:
             # --- ЕТАП 1: АДРЕСИ ТА ПЕРСОНИ (LOCATORE / CONDUTTORE) ---
 
-            # 1.1. Адреса Locatore
+            # 1.1. Адреса locatore
             loc_addr_id = None
             if adapter.get("locatore_comune_res") and adapter.get("locatore_via"):
                 loc_addr_id = db_upsert_address(conn, {
@@ -132,7 +136,7 @@ class VisuraProcessor:
                 address_id=loc_addr_id
             )
 
-            # 1.2. Адреса Conduttore
+            # 1.2. Адреса conduttore
             if cond_cf:
                 cond_addr_id = None
                 if adapter.get("conduttore_comune"):
@@ -141,7 +145,7 @@ class VisuraProcessor:
                         "via_full": adapter.get("conduttore_via") or ""
                     })
 
-                # Розділення повного імені Conduttore (якщо потрібно)
+                # Розділяємо повне ім'я conduttore, якщо воно прийшло одним рядком
                 cond_full_name = clean_str(adapter.get("conduttore_nome"))
                 c_surname, c_name = split_full_name(cond_full_name)
 
@@ -188,13 +192,14 @@ class VisuraProcessor:
 
                 # Оновлюємо інформацію про Locatore з візури
                 if parsed_dicts:
-                    # Prendiamo i dati del locatore dal primo immobile trovato (sono uguali per tutti)
+                    # Дані locatore беремо з першого immobile, бо для однієї візури
+                    # вони однакові в усіх рядках.
                     first_item = parsed_dicts[0]
                     v_name = first_item.get("locatore_name")
                     v_surname = first_item.get("locatore_surname")
 
-                    # Aggiorniamo il database con i nomi VERI estratti dalla visura
-                    # solo se non sono già stati forniti manualmente via YAML
+                    # Оновлюємо БД фактичними ПІБ з візури лише тоді,
+                    # коли їх не задали вручну в YAML.
                     db_upsert_person(
                         conn, locatore_cf,
                         surname=clean_str(adapter.get("locatore_surname")) or v_surname,
@@ -213,7 +218,7 @@ class VisuraProcessor:
                         "scala": d.get("scala")
                     })
 
-                    # Б. Створюємо/оновлюємо Immobile Master Data
+                    # Б. Створюємо або оновлюємо master-дані immobile
                     imm_obj = immobile_from_parsed_dict(d)
                     imm_id = db_upsert_immobile(
                         conn, locatore_cf, imm_obj,
@@ -289,7 +294,7 @@ class VisuraProcessor:
                         kind_enum = ContractKind.CONCORDATO
 
                     # -------------------------------------------------------------------------
-                    # 2. ENERGY_CLASS (Smart Patch)
+                    # 2. ENERGY_CLASS (smart patch)
                     # Логіка: 
                     #   - YAML == "-" -> None (видалено)
                     #   - YAML == "A" -> "A" (оновлено)
@@ -307,7 +312,7 @@ class VisuraProcessor:
                         final_energy = db_energy
 
                         # -------------------------------------------------------------------------
-                    # 3. ISTAT (Smart Patch)
+                    # 3. ISTAT (smart patch)
                     # -------------------------------------------------------------------------
                     yaml_istat = adapter.get("istat")
                     db_istat = contract_ctx.get("contract", {}).get("istat_rate")
@@ -321,7 +326,7 @@ class VisuraProcessor:
                         final_istat = float(db_istat)
 
                     # -------------------------------------------------------------------------
-                    # 4. DURATA (Smart Patch)
+                    # 4. DURATA (smart patch)
                     # -------------------------------------------------------------------------
                     yaml_durata = adapter.get("durata_anni")
                     db_durata = contract_ctx.get("contract", {}).get("durata_anni")
@@ -335,7 +340,7 @@ class VisuraProcessor:
                         final_durata = int(db_durata)
 
                     # -------------------------------------------------------------------------
-                    # 5. ARREDATO (Smart Patch)
+                    # 5. ARREDATO (smart patch)
                     # -------------------------------------------------------------------------
                     yaml_arredato = adapter.get("arredato")
                     db_arredato = contract_ctx.get("contract", {}).get("arredato_pct")

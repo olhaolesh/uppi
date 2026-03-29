@@ -1,3 +1,5 @@
+"""Типи вхідних і вихідних даних для розрахунку канону."""
+
 # uppi/domain/canone_models.py
 
 from dataclasses import dataclass

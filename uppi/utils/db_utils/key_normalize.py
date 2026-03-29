@@ -1,3 +1,5 @@
+"""Нормалізує ключі A/B/C/D елементів до canonical lower-case форми."""
+
 def normalize_element_key(grp: str, code: str) -> str:
     """
     Нормалізує ключ елемента до формату a1..d13.

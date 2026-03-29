@@ -1,3 +1,5 @@
+"""Готує placeholder-параметри для генерації DOCX-атестації."""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -16,6 +18,7 @@ ELEMENT_KEYS = (
 
 
 def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) -> Dict[str, str]:
+    """Будує словник placeholder-ів для DOCX-шаблону атестації."""
     params: Dict[str, str] = {}
 
     # Розпаковуємо контекст

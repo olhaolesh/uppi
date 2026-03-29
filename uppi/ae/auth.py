@@ -1,7 +1,16 @@
 """
-AE (Agenzia Entrate) authentication helpers.
+Хелпери авторизації в AE (Agenzia Entrate).
 
-Відповідає тільки за логін у профіль AE через вкладку Fisconline.
+Цей модуль належить до browser-critical flow.
+
+Protected invariants:
+- AE authentication flow через Fisconline не можна спрощувати або
+  перепорядковувати під час structural refactor.
+- selector order, wait/click/fill sequence і login markers тут є частиною
+  захищеного контракту.
+- `state.json` не можна трактувати як reusable persistent session state;
+  allowed work тут обмежується documentation / characterization /
+  safer logging / wrapper without semantic change.
 """
 
 import os
@@ -26,12 +35,17 @@ async def authenticate_user(
         True  - якщо PROIFLE_INFO знайдено (логін вдалий),
         False - якщо сталася помилка / таймаут.
 
-    При фейлі видаляє state.json, щоб не залишати битий стейт.
+    При фейлі видаляє `state.json`, щоб не залишати битий стейт.
+
+    Важливо:
+    - цей helper не є місцем для спроб "оптимізувати" login sequence;
+    - cleanup `state.json` при неуспішному логіні є частиною захищеної
+      session hygiene і не повинен перетворюватися на persistent-state reuse.
     """
     logger.info("[LOGIN] Starting AE authentication via Fisconline tab")
 
     try:
-        # Переключаємось на вкладку Fisconline
+        # Переходимо на вкладку Fisconline: порядок селекторів тут protected
         await page.wait_for_selector(UppiSelectors.FISCOLINE_TAB, timeout=10_000)
         await page.click(UppiSelectors.FISCOLINE_TAB)
         logger.debug("[LOGIN] Fisconline tab clicked")

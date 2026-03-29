@@ -1,0 +1,18 @@
+{
+  "pages": [
+    {
+      "text": "BIANCHI ANNA (CF: BNCNNA80A01H501Z)\nImmobili siti nel Comune di PESCARA (Codice G482)\n",
+      "blocks": [
+        [0, 0, 100, 20, "BIANCHI ANNA (CF: BNCNNA80A01H501Z)\n", 0, 0]
+      ]
+    }
+  ],
+  "tables": {
+    "1": [
+      [
+        ["Foglio", "Numero", "Sub", "Indirizzo", "Categoria", "Rendita", "Superficie catastale"],
+        ["10", "20", "", "VIA TEST 1", "A/2", "", "Totale: 10,0"]
+      ]
+    ]
+  }
+}

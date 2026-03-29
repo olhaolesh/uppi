@@ -1,0 +1,22 @@
+{
+  "pages": [
+    {
+      "text": "VERDI LUCA (CF: VRDLCU80A01H501Z)\nImmobili siti nel Comune di PESCARA (Codice G482)\n",
+      "blocks": [
+        [0, 0, 100, 20, "VERDI LUCA (CF: VRDLCU80A01H501Z)\n", 0, 0]
+      ]
+    },
+    {
+      "text": "Immobili siti nel Comune di CHIETI (Codice C632)\n",
+      "blocks": []
+    }
+  ],
+  "tables": {
+    "2": [
+      [
+        ["Foglio", "Numero", "Sub", "Indirizzo", "Categoria", "Rendita", "Superficie catastale"],
+        ["8", "77", "", "PIAZZA GARIBALDI SNC", "A/4", "Euro 222,00", "Totale: 55,0"]
+      ]
+    ]
+  }
+}

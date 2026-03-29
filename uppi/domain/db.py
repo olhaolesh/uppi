@@ -1,3 +1,5 @@
+"""Тонкі runtime-хелпери для підключення до PostgreSQL і простих DB-checks."""
+
 # uppi/domain/db.py
 from __future__ import annotations
 
@@ -61,7 +63,10 @@ def db_has_visura(cf: str) -> bool:
     try:
         conn = get_pg_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM public.visure WHERE cf = %s LIMIT 1;", (cf,))
+            cur.execute(
+                "SELECT 1 FROM public.visure WHERE locatore_cf = %s LIMIT 1;",
+                (cf,),
+            )
             exists = cur.fetchone() is not None
             logger.debug("[DB] db_has_visura(%s) → %s", cf, exists)
             conn.commit()

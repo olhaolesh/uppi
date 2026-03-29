@@ -1,4 +1,5 @@
-# This package will contain the spiders of your Scrapy project
-#
-# Please refer to the documentation for information on how to create and manage
-# your spiders.
+"""Scrapy-павуки проєкту.
+
+Пакет містить browser-critical entry points і не призначений для structural
+refactor без окремого regression-controlled етапу.
+"""

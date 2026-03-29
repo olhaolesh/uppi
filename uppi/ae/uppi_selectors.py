@@ -1,58 +1,58 @@
-"""
-Selectors used by the UppiSpider for web scraping.
-"""
+"""CSS- і text-selector-и, які використовує browser-critical flow павука UPPI."""
+
 class UppiSelectors:
-    """Selectors for the UppiSpider."""
-    # Login form selectors
+    """Збирає selector-и AE / SISTER в одному місці без зміни їхнього порядку."""
+
+    # Селектори форми входу
     FISCOLINE_TAB = 'ul > li > a[href="#tab-4"]'
     USERNAME_FIELD = '#username-fo-ent'
     PASSWORD_FIELD = '#password-fo-ent-1'
     PIN_FIELD = '#pin-fo-ent'
     ACCEDI_BUTON = 'button.btn-primary[type="submit"]'
 
-    # Profile selector
+    # Селектори профілю
     PROFILE_INFO ='#user-info'
     ESCI_SISTER_BUTTON = 'a:has-text("Esci")'
 
-    # SELECT SISTER SERVIZIO
+    # Вибір сервісу SISTER
     TUOI_PREFERITI_SECTION = 'label:has-text("I tuoi preferiti")'
     VAI_AL_SERVIZIO_BUTTON = 'a[href*="ret2sister"]'
 
-    # Home dei Servizi (SISTER)
+    # Домашня сторінка SISTER
     CONFERMA_BUTTON = 'input[value="Conferma"]'
     CONSULTAZIONI_CERTIFACAZIONI = '[data-active="Consultazioni e Certificazioni"]'
     VISURE_CATASTALI = 'li[data-active="Visure catastali"]'
 
-    # Visure Catastali
+    # Сторінка Visure catastali
     CONFERMA_LETTURA = 'a:has-text("Conferma Lettura")'
     SELECT_UFFICIO = 'select[name="listacom"]'
     APLICA_BUTTON = 'input[value="Applica"]'
 
-    # Ricerca persona fisica
+    # Пошук фізичної особи
     SELECT_CATASTO = 'select[name="tipoCatasto"]'
     SELECT_COMUNE = 'select[name="comuneCat"]'
     CODICE_FISCALE_RADIO = 'input[name="selDatiAna"][value="CF_PF"]'
     CODICE_FISCALE_FIELD = "#cf"
     RICERCA_BUTTON = 'input[name="ricerca"]'
 
-    # Elenco Omonimi
+    # Список омонімів
     SELECT_OMONIMI = 'input[name="omonimoSelezionato"]'
     IMOBILI_BUTTON = 'input[name="immobili"]'
     VISURA_PER_SOGGECTO_BUTTON = 'input[name="visura"]'
     
-    # Elenco immobili per diritti e quote
+    # Список нерухомості за правами і частками
     SELECT_IMOBILE = 'table > tbody:nth-child(2) > tr:nth-child(1) > td > input'
     VISURA_PER_IMOBILE_BUTTON = 'input[name="visuraImm"]'
 
-    # VISURA PER SOGGETTO
+    # Кнопка «Visura per soggetto»
     INOLTRA_BUTTON = 'input[name="inoltra"]'
 
-    # CAPTCHA selector
+    # CAPTCHA
     IMG_CAPTCHA = 'span > #imgCaptcha'
     CAPTCHA_FIELD = '#inCaptchaChars'
 
     INOLTRA_BUTTON = 'input[name="inoltra"]'
-    # Open document
+    # Відкриття документа
     APRI_BUTTON = 'input[value="Apri"]'
-    # Logout
+    # Вихід із сесії
     LOGOUT_BUTTON = '#error-msg h2'

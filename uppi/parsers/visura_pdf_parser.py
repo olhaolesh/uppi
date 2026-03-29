@@ -1,3 +1,5 @@
+"""Парсить PDF-візуру у список словників, сумісних з pipeline та БД."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,6 +11,7 @@ import fitz
 import camelot
 
 from uppi.parsers.address_parser import parse_address
+from uppi.logging_config import configure_uppi_logging
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +51,7 @@ class VisuraParser:
     REAL_ESTATE_COLUMNS = {"Foglio", "Numero", "Sub", "Categoria", "Classe"}
 
     def parse(self, pdf_path: str | Path) -> List[Dict[str, Any]]:
+        """Парсить PDF-візуру і повертає список словників нерухомості."""
         pdf_path = str(pdf_path)
         logger.info("[VISURA_PARSER] Парсимо PDF: %s", pdf_path)
 
@@ -95,12 +99,19 @@ class VisuraParser:
                         all_immobili.append(immobile)
 
             logger.info("[VISURA_PARSER] Готово: знайдено %d immobili у %s", len(all_immobili), pdf_path)
-            logger.info(f"All immobili information is: {all_immobili}")
+            if all_immobili:
+                sample_fields = sorted(all_immobili[0].keys())
+                logger.debug(
+                    "[VISURA_PARSER] Summary: count=%d, sample_fields=%s",
+                    len(all_immobili),
+                    sample_fields,
+                )
             return all_immobili
         finally:
             doc.close()
 
     def _normalize_header(self, header: str) -> str:
+        """Нормалізує заголовок колонки таблиці до canonical snake_case ключа."""
         snake = re.sub(r"[^A-Za-z0-9]+", "_", header).strip("_").lower()
 
         if snake == "microzona":
@@ -113,6 +124,7 @@ class VisuraParser:
         return snake
 
     def _extract_name_cf(self, doc) -> Dict[str, Any]:
+        """Дістає ім’я та CF орендодавця з першої сторінки PDF."""
         page = doc[0]
         blocks = page.get_text("blocks")
 
@@ -127,6 +139,7 @@ class VisuraParser:
         return {"locatore_surname": None, "locatore_name": None, "cf": None}
 
     def _extract_comune_for_page(self, page) -> tuple[str | None, str | None]:
+        """Шукає comune і codice comune для конкретної сторінки."""
         txt = page.get_text("text")
         for line in txt.splitlines():
             m = self.COMUNE_TABLE.search(line.strip())
@@ -135,6 +148,7 @@ class VisuraParser:
         return None, None
 
     def _process_table(self, table):
+        """Обробляє одну Camelot-таблицю і повертає список рядків нерухомості."""
         df = table.df
         if df.empty:
             return None
@@ -201,6 +215,7 @@ class VisuraParser:
         return {"immobili": rows} if rows else None
 
     def _parse_superficie(self, text: str) -> Dict[str, Any]:
+        """Розбирає блок superficie catastale на структуровані поля."""
         txt = text.replace("\n", " ")
         totale = None
         escluse = None
@@ -216,6 +231,7 @@ class VisuraParser:
         return {"superficie_totale": totale, "superficie_escluse": escluse, "superficie_raw": txt}
 
     def _parse_rendita(self, text: str) -> dict[str, str] | None:
+        """Нормалізує поле rendita до поточного output-контракту парсера."""
         text = text.replace("Euro", "").strip()
 
         if not text:
@@ -223,12 +239,20 @@ class VisuraParser:
         return {"rendita": f"€ {self._normalize_number(text)}"}
 
     def _normalize_number(self, numstr: str) -> float:
+        """Перетворює текстове число з комами/пробілами у float або None."""
         return float(numstr.replace(",", ".").replace(" ", ""))
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
+    configure_uppi_logging(level="DEBUG")
     parser = VisuraParser()
     data = parser.parse(PDF_PATH)
-    for t in data:
-        print(t)
+    logger.info("[VISURA_PARSER] Parsed %d immobili in standalone mode", len(data))
+    for idx, item in enumerate(data, start=1):
+        logger.debug(
+            "[VISURA_PARSER] Standalone immobile #%d summary: foglio=%s numero=%s sub=%s",
+            idx,
+            item.get("foglio"),
+            item.get("numero"),
+            item.get("sub"),
+        )

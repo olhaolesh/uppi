@@ -1,4 +1,5 @@
-# uppi/utils/audit.py
+"""Хелпери для audit-safe форматування, хешування й cleanup локальних файлів."""
+
 from __future__ import annotations
 
 from datetime import time
@@ -29,6 +30,7 @@ def mask_username(login: str) -> str:
 
 
 def sha256_text(text: str) -> Optional[str]:
+    """Рахує SHA-256 для тексту або повертає None для порожнього значення."""
     if not text:
         return None
     s = str(text)
@@ -56,7 +58,7 @@ def stable_json_dumps(obj: Any) -> str:
 
 
 # ------------------------------------------------------------
-# person name formatting
+# Форматування ПІБ
 # ------------------------------------------------------------
 
 _ROMAN_NUMERALS = {
@@ -66,7 +68,7 @@ _ROMAN_NUMERALS = {
 
 def _smart_title_token(token: str) -> str:
     """
-    Title-case для одного токена, з підтримкою:
+    Перетворює один токен у title-case з підтримкою:
     - апострофів: D'AMICO -> D'Amico
     - дефісів: ANNA-MARIA -> Anna-Maria
     - римських цифр: II -> II
@@ -143,11 +145,11 @@ def format_person_fullname(name: Optional[str], surname: Optional[str]) -> str:
     return ""
 
 # ------------------------------------------------------------
-# END: person name formatting
+# Кінець блоку форматування ПІБ
 # ------------------------------------------------------------
 
 # ------------------------------------------------------------
-# Видалення .pdf файлу visure після завантаження
+# Видалення локального PDF-файлу візури після завантаження
 # ------------------------------------------------------------
 def safe_unlink(path: Path, retries: int = 3, delay_sec: float = 0.2) -> bool:
     """
@@ -174,5 +176,5 @@ def safe_unlink(path: Path, retries: int = 3, delay_sec: float = 0.2) -> bool:
 
     return False
 # ------------------------------------------------------------
-# END: Видалення .pdf файлу visure після завантаження
+# Кінець блоку видалення локального PDF-файлу візури
 # ------------------------------------------------------------

@@ -18,6 +18,22 @@
         - download_document(...)
         - yield UppiItem з прапорцями успіху/фейлу
     - наприкінці завжди робить logout (через кнопку або URL)
+
+Protected invariants для цього модуля:
+- AE authentication / SISTER transition / CAPTCHA / visura download flow не
+  можна "оптимізовувати" structural refactor-ом без окремого high-risk етапу.
+- selector order і wait/click/fill sequence не можна міняти всліпу.
+- logout є частиною бізнес-критичного session lifecycle, а не optional cleanup.
+- passive browser close не є допустимою заміною logout.
+- `state.json` тут треба трактувати як protected lifecycle contract, а не як
+  кэш для reuse між новими сесіями:
+  `fresh session -> save state -> use for direct SISTER -> logout -> delete invalid state`.
+
+Допустимі безпечні зміни:
+- documentation;
+- characterization;
+- safer logging with redaction;
+- wrapper/API encapsulation без зміни порядку дій і semantics.
 """
 
 import os
@@ -37,6 +53,7 @@ from uppi.config import AppConfig
 from uppi.domain.clients import load_clients
 from uppi.domain.db import get_pg_connection
 from uppi.items import UppiItem
+from uppi.logging_config import configure_uppi_logging
 from uppi.services.db_repo import fetch_visura_state
 from uppi.services.storage_minio import StorageService
 from uppi.services.visura_policy import should_download_visura
@@ -56,11 +73,18 @@ AE_PIN = config("AE_PIN")
 
 
 class UppiSpider(scrapy.Spider):
+    """Головний Scrapy-павук для browser-critical роботи з AE і SISTER."""
     name = "uppi"
     allowed_domains = ["agenziaentrate.gov.it"]
 
     # Тут складатимемо клієнтів, для яких треба реально йти в SISTER
     clients_to_fetch: List[Dict[str, Any]]
+
+    @classmethod
+    def from_crawler(cls, crawler, *args, **kwargs):
+        """Підключає centralized logging перед створенням spider-а."""
+        configure_uppi_logging()
+        return super().from_crawler(crawler, *args, **kwargs)
 
     async def start(self):
         """
@@ -73,7 +97,9 @@ class UppiSpider(scrapy.Spider):
         """
         self.logger.info("[START] UppiSpider starting...")
 
-        # Чистимо старий state.json
+        # Protected invariant: кожна нова сесія має стартувати без reuse
+        # застарілого `state.json`. Цей cleanup не можна перетворювати на
+        # зміну lifecycle semantics або на дозвіл зберігати persistent state.
         self.logger.info("[START] Cleaning old state.json if present")
         try:
             if os.path.exists("state.json"):
@@ -344,7 +370,9 @@ class UppiSpider(scrapy.Spider):
                 yield UppiItem(**mapped)
 
         finally:
-            # Гарантований logout з SISTER (через UI або endpoint)
+            # Protected invariant: logout є обов'язковою частиною завершення
+            # session lifecycle. Просте закриття сторінки не є еквівалентною
+            # заміною цього кроку.
             try:
                 if sister_page:
                     await self._logout_in_context(
@@ -381,6 +409,12 @@ class UppiSpider(scrapy.Spider):
     ) -> bool:
         """
         Універсальний logout в рамках Playwright-контексту.
+
+        Важливо:
+        - це business-critical helper для завершення серверної сесії;
+        - його не можна замінювати на passive browser close;
+        - зміни тут допускаються лише як documentation / characterization /
+          safer logging / wrapper without semantic change.
 
         - via_ui=True: спробує клікнути по кнопці 'Esci' (якщо є), інакше — перехід на SISTER_LOGOUT_URL.
         - якщо в контексті немає відкритих сторінок — створює тимчасову сторінку, йде на logout URL і закриває її.

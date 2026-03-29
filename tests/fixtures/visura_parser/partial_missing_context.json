@@ -1,0 +1,18 @@
+{
+  "pages": [
+    {
+      "text": "Documento senza intestazione riconosciuta\n",
+      "blocks": [
+        [0, 0, 100, 20, "Intestazione non riconosciuta\n", 0, 0]
+      ]
+    }
+  ],
+  "tables": {
+    "1": [
+      [
+        ["Foglio", "Numero", "Sub", "Indirizzo", "Categoria", "Rendita", "Superficie catastale"],
+        ["99", "100", "", "VIA MAZZINI SNC", "A/3", "Euro 456,00", "nessun dato superficie"]
+      ]
+    ]
+  }
+}

@@ -1,3 +1,5 @@
+"""Адаптер до S3-compatible storage та canonical naming rules для артефактів."""
+
 # uppi/domain/object_storage.py
 from __future__ import annotations
 
@@ -33,6 +35,7 @@ class ObjectStorageConfig:
 
 
 def load_storage_config() -> ObjectStorageConfig:
+    """Зчитує конфіг storage з env-параметрів поточного оточення."""
     return ObjectStorageConfig(
         endpoint=config("S3_ENDPOINT", default="localhost:9000"),
         access_key=config("S3_ACCESS_KEY", default="minioadmin"),
@@ -48,11 +51,13 @@ class ObjectStorage:
     Тонка обгортка над MinIO client.
     """
     def __init__(self, cfg: Optional[ObjectStorageConfig] = None):
+        """Створює storage-адаптер з переданим або стандартним конфігом."""
         self.cfg = cfg or load_storage_config()
         self._client: Optional[Minio] = None
 
     @property
     def client(self) -> Minio:
+        """Ліниво створює й кешує клієнт MinIO/S3."""
         if self._client is None:
             self._client = Minio(
                 self.cfg.endpoint,
@@ -86,6 +91,7 @@ class ObjectStorage:
             logger.warning("[S3] Unexpected make_bucket(%s) error: %s", bucket, e)
 
     def object_exists(self, bucket: str, object_name: str) -> bool:
+        """Перевіряє наявність об’єкта у bucket без кидання S3-помилки назовні."""
         try:
             self.client.stat_object(bucket, object_name)
             return True
@@ -96,6 +102,7 @@ class ObjectStorage:
             return False
 
     def upload_file(self, bucket: str, object_name: str, file_path: Path, content_type: str) -> None:
+        """Завантажує локальний файл у bucket з указаним content type."""
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
 
@@ -114,7 +121,9 @@ class ObjectStorage:
     # ---- Canonical object names (щоб не плодити різні формати) ----
 
     def visura_object_name(self, cf: str) -> str:
+        """Формує canonical key для PDF-візури конкретного CF."""
         return f"visure/{cf}.pdf"
 
     def attestazione_object_name(self, cf: str, contract_id: str) -> str:
+        """Формує canonical key для DOCX-атестації конкретного контракту."""
         return f"attestazioni/{cf}/{contract_id}.docx"

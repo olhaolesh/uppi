@@ -1,3 +1,5 @@
+"""Тести для policy-рішення щодо повторного завантаження візури."""
+
 from datetime import datetime, timedelta
 
 from uppi.services.db_repo import VisuraState
@@ -5,6 +7,7 @@ from uppi.services.visura_policy import should_download_visura
 
 
 def test_should_download_force_update():
+    """Перевіряє сценарій, описаний у назві тесту."""
     decision = should_download_visura(
         force_update=True,
         db_state=None,
@@ -15,6 +18,7 @@ def test_should_download_force_update():
 
 
 def test_should_download_missing_state():
+    """Перевіряє сценарій, описаний у назві тесту."""
     decision = should_download_visura(
         force_update=False,
         db_state=None,
@@ -25,6 +29,7 @@ def test_should_download_missing_state():
 
 
 def test_should_download_fresh():
+    """Перевіряє сценарій, описаний у назві тесту."""
     state = VisuraState(
         cf="CF",
         pdf_bucket="bucket",

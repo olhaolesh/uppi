@@ -1,9 +1,16 @@
 """
-CAPTCHA handling for SISTER (2Captcha integration).
+Обробка CAPTCHA для SISTER (2Captcha integration).
 
 Тут логіка:
 - перевірити, чи є CAPTCHA,
 - якщо є — зняти скрін, відправити в 2Captcha, заповнити поле й натиснути 'Inoltra'.
+
+Protected invariants:
+- CAPTCHA flow є browser-critical.
+- submit sequence, selector order і wait/click behavior не можна міняти як
+  "optimization" без окремого high-risk етапу.
+- allowed work тут обмежується documentation / characterization /
+  safer logging / wrapper without semantic change.
 """
 
 import os
@@ -26,11 +33,15 @@ async def solve_captcha_if_present(
     Перевірити, чи є CAPTCHA. Якщо немає — просто тиснемо 'Inoltra' і чекаємо.
     Якщо є — розв'язуємо через 2Captcha.
 
+    Важливо:
+    - обидві гілки (`no captcha` і `captcha present`) належать до protected flow;
+    - змінювати submit ordering або retry semantics тут не можна без live regression.
+
     Повертає:
         True  - якщо або CAPTCHA не було, або її успішно відправили
         False - якщо виникла критична помилка в процесі
     """
-    # Спочатку перевіряємо, чи є елемент CAPTCHA
+    # Спершу визначаємо, чи є CAPTCHA на сторінці
     try:
         await page.wait_for_selector(UppiSelectors.IMG_CAPTCHA, timeout=5_000)
         captcha_present = True
@@ -40,7 +51,7 @@ async def solve_captcha_if_present(
         logger.info("[CAPTCHA] No CAPTCHA detected, trying plain 'Inoltra' submit")
 
     if not captcha_present:
-        # Якщо CAPTCHA немає — просто тиснемо Inoltra і чекаємо зникнення кнопки / переходу
+        # Якщо CAPTCHA немає, відправляємо форму звичайним шляхом
         try:
             await page.click(UppiSelectors.INOLTRA_BUTTON)
             inoltra_button = page.locator(UppiSelectors.INOLTRA_BUTTON)
@@ -57,7 +68,7 @@ async def solve_captcha_if_present(
             logger.exception("[CAPTCHA] Unexpected error while clicking 'Inoltra' without captcha: %s", e)
             return False
 
-    # Якщо ми тут — CAPTCHA є, розв'язуємо
+    # Якщо ми тут, CAPTCHA є і її треба розв'язати
     try:
         await page.click(UppiSelectors.CAPTCHA_FIELD)
         logger.debug("[CAPTCHA] Focused CAPTCHA input field")
@@ -121,15 +132,15 @@ async def _solve_captcha(
         logger.exception("[CAPTCHA] Unexpected error while locating CAPTCHA: %s", e)
         return None
 
-    # Директорія для скріншотів
+    # Локальна директорія для скріншотів CAPTCHA
     folder_name = codice_fiscale or "unknown_cf"
     folder_path = os.path.join("captcha_images", folder_name)
     try:
         os.makedirs(folder_path, exist_ok=True)
     except Exception as e:
-        logger.warning("[CAPTCHA] Cannot create folder for captcha images '%s': %s", folder_path, e)
+        logger.warning("[CAPTCHA] Cannot prepare local captcha image folder: %s", e)
 
-    # Робимо скріншот
+    # Робимо скріншот CAPTCHA
     try:
         await playwright_page.wait_for_timeout(3_000)  # невелика пауза перед зняттям скріну
         image_path = os.path.join(folder_path, "captcha.png")
@@ -137,7 +148,7 @@ async def _solve_captcha(
         if not captcha_bytes:
             logger.warning("[CAPTCHA] Failed to get screenshot bytes from CAPTCHA element")
             return None
-        logger.info("[CAPTCHA] Screenshot saved: %s", image_path)
+        logger.info("[CAPTCHA] Screenshot captured for solver (bytes=%d)", len(captcha_bytes))
     except PlaywrightTimeoutError as e:
         logger.warning("[CAPTCHA] Timeout while taking CAPTCHA screenshot: %s", e)
         return None
@@ -145,24 +156,27 @@ async def _solve_captcha(
         logger.exception("[CAPTCHA] Unexpected error while taking CAPTCHA screenshot: %s", e)
         return None
 
-    # Конвертуємо у base64
+    # Перетворюємо скріншот у base64 для 2Captcha
     try:
         captcha_base64 = base64.b64encode(captcha_bytes).decode("utf-8")
     except Exception as e:
         logger.exception("[CAPTCHA] Failed to encode screenshot to base64: %s", e)
         return None
 
-    # Відправляємо в 2Captcha
+    # Відправляємо CAPTCHA у 2Captcha
     try:
         solver = TwoCaptcha(solver_key)
-        # У деяких версіях TwoCaptcha normal() приймає base64 без параметра 'file'
+        # У деяких версіях клієнта TwoCaptcha `normal()` приймає base64 без `file`
         result = solver.normal(captcha_base64)
-        logger.debug("[CAPTCHA] Raw 2Captcha result: %r", result)
+        if isinstance(result, dict):
+            logger.debug("[CAPTCHA] 2Captcha response received (keys=%s)", sorted(result.keys()))
+        else:
+            logger.debug("[CAPTCHA] 2Captcha response received (type=%s)", type(result).__name__)
     except Exception as e:
         logger.error("[CAPTCHA] Error while calling 2Captcha: %s", e)
         return None
 
-    # Витягуємо код
+    # Витягуємо розпізнаний код
     try:
         code = (result or {}).get("code", "").strip()
     except Exception:
@@ -172,5 +186,5 @@ async def _solve_captcha(
         logger.warning("[CAPTCHA] 2Captcha returned empty or invalid code")
         return None
 
-    logger.info("[CAPTCHA] CAPTCHA solved: %s", code)
+    logger.info("[CAPTCHA] CAPTCHA solved successfully")
     return code
