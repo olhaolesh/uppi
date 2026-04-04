@@ -13,7 +13,6 @@ Protected invariants:
   safer logging / wrapper without semantic change.
 """
 
-import os
 import base64
 from typing import Any
 
@@ -21,6 +20,7 @@ from twocaptcha import TwoCaptcha
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from uppi.ae.uppi_selectors import UppiSelectors
+from uppi.config.workspace import get_captcha_client_dir
 
 
 async def solve_captcha_if_present(
@@ -134,17 +134,17 @@ async def _solve_captcha(
 
     # Локальна директорія для скріншотів CAPTCHA
     folder_name = codice_fiscale or "unknown_cf"
-    folder_path = os.path.join("captcha_images", folder_name)
+    folder_path = get_captcha_client_dir(folder_name)
     try:
-        os.makedirs(folder_path, exist_ok=True)
+        folder_path.mkdir(parents=True, exist_ok=True)
     except Exception as e:
         logger.warning("[CAPTCHA] Cannot prepare local captcha image folder: %s", e)
 
     # Робимо скріншот CAPTCHA
     try:
         await playwright_page.wait_for_timeout(3_000)  # невелика пауза перед зняттям скріну
-        image_path = os.path.join(folder_path, "captcha.png")
-        captcha_bytes = await captcha_element.screenshot(path=image_path, type="png")
+        image_path = folder_path / "captcha.png"
+        captcha_bytes = await captcha_element.screenshot(path=str(image_path), type="png")
         if not captcha_bytes:
             logger.warning("[CAPTCHA] Failed to get screenshot bytes from CAPTCHA element")
             return None

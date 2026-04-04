@@ -1,5 +1,11 @@
 # Refactor Execution Plan — Sprint 3
 
+> Historical / archival planning artifact.
+> Sprint 3 planning context збережений для історії, але не є current guide.
+> Для актуальних boundaries дивіться [README.md](../README.md),
+> [Поточну архітектуру](./current_architecture.md) і
+> [AWS-readiness note](./aws_readiness_runtime_boundaries.md).
+
 ## Sprint Goal
 
 Головна мета Sprint 3: підготувати проект до наступного етапу стабілізації, AWS-ready runtime boundaries і deeper cleanup без втручання в browser-critical invariants.
@@ -47,14 +53,28 @@
    infra-only retry, no blind browser retry, explicit classification of retryable failures.
 4. Провести transaction/resource-safety review:
    зафіксувати current transaction ownership, rollback points, allowed containment moves і цільові unit-of-work boundaries без transaction-boundary rewrite у цьому спринті.
+
+   Canonical artifact після виконання цього кроку:
+   - [docs/transaction_resource_safety_review.md](./transaction_resource_safety_review.md)
+
 5. Ввести `CalculationStrategy` boundary з default `Pescara2018Strategy`, не змінюючи поточні формули.
 6. Ввести workspace/local artifacts policy:
    `downloads/`, `captcha_images/`, DOCX/PDF temporary artifacts, cleanup contract, configurable workspace root with unchanged default paths on first pass.
+
+   Canonical artifact після виконання цього кроку:
+   - [docs/workspace_local_artifacts_policy.md](./workspace_local_artifacts_policy.md)
+
 7. Для `state.json` дозволені тільки better logging, better docs, better characterization/tests і, за потреби, wrapper API без зміни контракту
    `fresh session -> save state -> use for direct SISTER -> logout -> delete invalid state`.
 8. Підготувати AWS-readiness package:
    config provider readiness for Secrets Manager/SSM, object storage boundary, DB connection factory notes, runtime recommendations for ECS/Fargate first.
+
+   Canonical artifact після виконання цього кроку:
+   - [docs/aws_readiness_runtime_boundaries.md](./aws_readiness_runtime_boundaries.md)
 9. Підготувати compatibility-shim migration slice для production code in `uppi/docs/`, не видаляючи старий import path у тому самому спринті, only if Sprint 2 tests are stable.
+
+   Canonical artifact після виконання цього кроку:
+   - [docs/compatibility_shim_migration_uppi_docs.md](./compatibility_shim_migration_uppi_docs.md)
 10. Оновити final technical docs і українські docstrings для нової цільової архітектури.
 11. Завершити спринт повним regression pass:
     unit + integration + golden path + live smoke where needed.

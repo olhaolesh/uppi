@@ -68,10 +68,12 @@ def test_person_sync_service_preserves_current_locatore_and_conduttore_order(mon
     calls: list[tuple] = []
 
     def fake_upsert_address(conn, payload):
+        """Фіксує address upsert call у поточному порядку."""
         calls.append(("address", payload["comune"], payload["via_full"]))
         return 10 + len([c for c in calls if c[0] == "address"])
 
     def fake_upsert_person(conn, cf, *, surname, name, address_id):
+        """Фіксує person upsert call у поточному порядку."""
         calls.append(("person", cf, surname, name, address_id))
 
     monkeypatch.setattr(stage_module, "db_upsert_address", fake_upsert_address)
@@ -93,6 +95,7 @@ def test_person_sync_service_preserves_current_locatore_and_conduttore_order(mon
     result = PersonSyncService().sync(
         object(),
         adapter,
+        run_id="run-1",
         locatore_cf="RSSMRA80A01H501Z",
         cond_cf="BNCMRA80A01H501Z",
     )
@@ -117,17 +120,21 @@ def test_visura_ingest_service_preserves_current_upload_and_registration_contrac
         """Фіксує upload calls для assert-перевірок."""
 
         def upload_file(self, bucket, object_name, path, content_type):
+            """Записує upload contract без реального object storage."""
             calls.append(("upload", bucket, object_name, Path(path), content_type))
 
     def fake_lookup(cf, adapter):
+        """Повертає знайдений локальний PDF у current lookup точці."""
         calls.append(("lookup", cf))
         return pdf_path
 
     def fake_sha256(path):
+        """Повертає контрольований checksum для ingest assertions."""
         calls.append(("sha256", Path(path)))
         return "deadbeef"
 
     def fake_db_upsert_visura(conn, cf, bucket, obj_name, checksum, *, fetched_now):
+        """Фіксує current visura registration contract у БД."""
         calls.append(("db_upsert_visura", cf, bucket, obj_name, checksum, fetched_now))
         return 41
 
@@ -143,6 +150,7 @@ def test_visura_ingest_service_preserves_current_upload_and_registration_contrac
     result = service.ingest(
         object(),
         ItemAdapter({"visura_source": "sister", "visura_downloaded": True}),
+        run_id="run-1",
         locatore_cf="RSSMRA80A01H501Z",
     )
 
@@ -182,25 +190,31 @@ def test_immobile_sync_service_preserves_current_parse_person_and_prune_order(mo
         """Повертає контрольований parsed output."""
 
         def parse(self, path):
+            """Повертає зафіксований parsed output для immobile stage."""
             calls.append(("parse", Path(path)))
             return parsed_rows
 
     def fake_upsert_person(conn, cf, *, surname, name, address_id):
+        """Фіксує current person-upsert call з parser stage."""
         calls.append(("person", cf, surname, name, address_id))
 
     def fake_upsert_address(conn, payload):
+        """Фіксує current visura-address upsert."""
         calls.append(("address", payload["comune"], payload["via_full"]))
         return 21
 
     def fake_immobile_from_parsed_dict(parsed):
+        """Повертає контрольований `Immobile` з parsed row."""
         calls.append(("immobile_from_parsed_dict", parsed["foglio"], parsed["numero"], parsed["sub"]))
         return Immobile(foglio="12", numero="345", sub="7")
 
     def fake_upsert_immobile(conn, cf, imm, *, visura_addr_id, source_visura_id):
+        """Фіксує current immobile upsert contract."""
         calls.append(("immobile", cf, visura_addr_id, source_visura_id, imm.foglio, imm.numero, imm.sub))
         return 31
 
     def fake_prune(conn, cf, keep_ids, enabled):
+        """Фіксує current prune call після sync усіх immobili."""
         calls.append(("prune", cf, keep_ids, enabled))
 
     monkeypatch.setattr(stage_module, "db_upsert_person", fake_upsert_person)
@@ -218,6 +232,7 @@ def test_immobile_sync_service_preserves_current_parse_person_and_prune_order(mo
         object(),
         SimpleNamespace(logger=RecordingLogger()),
         ItemAdapter({}),
+        run_id="run-1",
         locatore_cf="RSSMRA80A01H501Z",
         loc_addr_id=11,
         visura_ingest=VisuraIngestResult(
@@ -244,20 +259,25 @@ def test_contract_sync_service_preserves_current_real_address_elements_contract_
     calls: list[tuple] = []
 
     def fake_upsert_address(conn, payload):
+        """Фіксує current real-address upsert."""
         calls.append(("address", payload["comune"], payload["via_full"], payload["civico"]))
         return 51
 
     def fake_update_real_address(conn, immobile_id, *, real_address_id, energy_class):
+        """Фіксує current real-address update semantics."""
         calls.append(("update_real_address", immobile_id, real_address_id, energy_class))
 
     def fake_upsert_elements(conn, immobile_id, adapter):
+        """Фіксує current immobile-elements upsert call."""
         calls.append(("elements", immobile_id))
 
     def fake_upsert_contract(conn, immobile_id, adapter):
+        """Фіксує current contract upsert call."""
         calls.append(("contract", immobile_id))
         return 61
 
     def fake_load_contract_context(conn, contract_id):
+        """Повертає контрольований joined contract context."""
         calls.append(("context", contract_id))
         return {"contract": {"id": contract_id}}
 
@@ -278,7 +298,13 @@ def test_contract_sync_service_preserves_current_real_address_elements_contract_
         }
     )
 
-    result = ContractSyncService().sync(object(), adapter, immobile_id=71)
+    result = ContractSyncService().sync(
+        object(),
+        adapter,
+        run_id="run-1",
+        client_cf="RSSMRA80A01H501Z",
+        immobile_id=71,
+    )
 
     assert result.contract_id == 61
     assert result.contract_ctx == {"contract": {"id": 61}}
@@ -295,22 +321,29 @@ def test_canone_stage_service_preserves_current_insert_then_reload_contract_cont
     """Перевіряє сценарій, описаний у назві тесту."""
     calls: list[tuple] = []
 
-    def fake_compute_base_canone(can_in):
-        calls.append(("compute", can_in.contract_kind.name, can_in.energy_class, can_in.durata_anni))
-        return SimpleNamespace(canone_finale_mensile=650.0, marker="ok")
+    class RecordingStrategy:
+        """Фіксує використання strategy seam без зміни current canone result shape."""
+
+        code = "pescara2018_base"
+
+        def calculate(self, can_in):
+            """Повертає контрольований результат current calculation boundary."""
+            calls.append(("compute", can_in.contract_kind.name, can_in.energy_class, can_in.durata_anni))
+            return SimpleNamespace(canone_finale_mensile=650.0, marker="ok")
 
     def fake_insert_canone_calc(conn, contract_id, strategy, *, inputs, result_mensile):
+        """Фіксує snapshot persistence без реального DB insert."""
         calls.append(("insert_calc", contract_id, strategy, result_mensile, inputs["canone_input"]["durata_anni"]))
 
     def fake_load_contract_context(conn, contract_id):
+        """Повертає current post-insert reload shape."""
         calls.append(("reload_context", contract_id))
         return {"contract": {"id": contract_id}, "elements": {"a1": "X"}, "immobile": {"energy_class": "B"}}
 
-    monkeypatch.setattr(stage_module, "compute_base_canone", fake_compute_base_canone)
     monkeypatch.setattr(stage_module, "db_insert_canone_calc", fake_insert_canone_calc)
     monkeypatch.setattr(stage_module, "db_load_contract_context", fake_load_contract_context)
 
-    result = CanoneStageService().run(
+    result = CanoneStageService(calculation_strategy=RecordingStrategy()).run(
         object(),
         SimpleNamespace(logger=RecordingLogger()),
         ItemAdapter(
@@ -323,6 +356,8 @@ def test_canone_stage_service_preserves_current_insert_then_reload_contract_cont
                 "ignore_surcharges": "yes",
             }
         ),
+        run_id="run-1",
+        locatore_cf="RSSMRA80A01H501Z",
         imm=Immobile(
             superficie_totale=80.0,
             micro_zona="1",
@@ -361,28 +396,34 @@ def test_document_stage_service_preserves_current_generate_upload_audit_order(mo
         """Фіксує upload calls для assert-перевірок."""
 
         def upload_file(self, bucket, object_name, path, content_type):
+            """Записує upload contract generated DOCX без реального storage."""
             calls.append(("upload", bucket, object_name, Path(path).name, content_type))
 
     class RecordingAuditStage:
         """Фіксує audit calls для assert-перевірок."""
 
-        def log_generated(self, conn, contract_id, out_bucket, out_obj, params_snapshot):
-            calls.append(("audit_generated", contract_id, out_bucket, out_obj, params_snapshot["template_version"]))
+        def log_generated(self, conn, contract_id, out_bucket, out_obj, params_snapshot, *, run_id, client_cf):
+            """Фіксує success-audit call у current ordering."""
+            calls.append(("audit_generated", contract_id, out_bucket, out_obj, params_snapshot["template_version"], run_id, client_cf))
 
-        def log_failed(self, conn, contract_id, error):
-            calls.append(("audit_failed", contract_id, str(error)))
+        def log_failed(self, conn, contract_id, error, *, run_id, client_cf):
+            """Фіксує failed-audit call у current ordering."""
+            calls.append(("audit_failed", contract_id, str(error), run_id, client_cf))
 
     output_path = tmp_path / "attestazioni" / "doc.docx"
 
     def fake_build_template_params(adapter, imm, contract_ctx):
+        """Повертає контрольований placeholder snapshot."""
         calls.append(("build_params", contract_ctx["contract"]["id"]))
         return {"LOCATORE_CF": "RSSMRA80A01H501Z"}
 
     def fake_get_attestazione_path(cf, contract_id, imm):
+        """Повертає контрольований local output path."""
         calls.append(("resolve_path", cf, contract_id))
         return output_path
 
     def fake_fill_template(*, template_path, output_folder, filename, params, underscored):
+        """Фіксує template-fill call без зміни generated-path contract."""
         calls.append(("fill_template", Path(template_path).name, Path(output_folder), filename, params["LOCATORE_CF"]))
         return output_path
 
@@ -402,6 +443,7 @@ def test_document_stage_service_preserves_current_generate_upload_audit_order(mo
         object(),
         SimpleNamespace(logger=RecordingLogger()),
         ItemAdapter({"LOCATORE_CF": "RSSMRA80A01H501Z"}),
+        run_id="run-1",
         imm=Immobile(foglio="12", numero="345", sub="7"),
         contract_ctx={"contract": {"id": 91}, "immobile": {"energy_class": "B"}},
         contract_id=91,
@@ -422,7 +464,7 @@ def test_document_stage_service_preserves_current_generate_upload_audit_order(mo
             "doc.docx",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         ),
-        ("audit_generated", 91, "attestazioni-bucket", "attestazioni/RSSMRA80A01H501Z/91.docx", "pescara2018_v2"),
+        ("audit_generated", 91, "attestazioni-bucket", "attestazioni/RSSMRA80A01H501Z/91.docx", "pescara2018_v2", "run-1", "RSSMRA80A01H501Z"),
     ]
 
 
@@ -442,13 +484,28 @@ def test_audit_stage_service_preserves_current_generated_and_failed_log_shape(mo
         author_login_sha256=None,
         template_version=None,
     ):
+        """Фіксує shape audit-row payload без реального insert."""
         calls.append((status, contract_id, bucket, object_name, error, author_login_masked, bool(author_login_sha256), template_version, params_snapshot))
 
     monkeypatch.setattr(stage_module, "db_insert_attestazione_log", fake_insert_attestazione_log)
 
     audit = AuditStageService(runtime_config=_make_runtime_config(tmp_path))
-    audit.log_generated(object(), 101, "bucket-a", "obj-a", {"template_version": "pescara2018_v2"})
-    audit.log_failed(object(), 102, RuntimeError("boom"))
+    audit.log_generated(
+        object(),
+        101,
+        "bucket-a",
+        "obj-a",
+        {"template_version": "pescara2018_v2"},
+        run_id="run-1",
+        client_cf="RSSMRA80A01H501Z",
+    )
+    audit.log_failed(
+        object(),
+        102,
+        RuntimeError("boom"),
+        run_id="run-1",
+        client_cf="RSSMRA80A01H501Z",
+    )
 
     assert calls[0][0:4] == ("generated", 101, "bucket-a", "obj-a")
     assert calls[1][0:4] == ("failed", 102, "", "")

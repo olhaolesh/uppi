@@ -1,5 +1,11 @@
 # Refactor Execution Plan Overview
 
+> Historical / archival planning artifact.
+> Цей файл корисний для історії рефакторингу, але не є current operational guide.
+> Для актуального стану проєкту починайте з [README.md](../README.md),
+> [Поточної архітектури](./current_architecture.md) і
+> [Основного runtime flow](./runtime_flow.md).
+
 ## Executive Summary
 
 Цей execution-plan стискає вже підготовлений architecture audit у 3 реальні ітерації:

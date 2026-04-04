@@ -3,13 +3,13 @@
 Це шаблон для ручного sign-off після реального live smoke run.
 Він не є evidence сам по собі. Його треба заповнювати лише після фактичного
 ручного прогону за canonical checklist:
-[docs/live_smoke_strategy_ae_sister.md](/Users/nitort/projects/uppi/docs/live_smoke_strategy_ae_sister.md).
+[./live_smoke_strategy_ae_sister.md](./live_smoke_strategy_ae_sister.md).
 
 Пов'язані документи:
 
-- canonical checklist: [docs/live_smoke_strategy_ae_sister.md](/Users/nitort/projects/uppi/docs/live_smoke_strategy_ae_sister.md)
-- protected invariants: [docs/refactor_protected_invariants.md](/Users/nitort/projects/uppi/docs/refactor_protected_invariants.md)
-- Sprint 2 merge gate: [docs/sprint_2_merge_readiness_checklist.md](/Users/nitort/projects/uppi/docs/sprint_2_merge_readiness_checklist.md)
+- canonical checklist: [./live_smoke_strategy_ae_sister.md](./live_smoke_strategy_ae_sister.md)
+- protected invariants: [./refactor_protected_invariants.md](./refactor_protected_invariants.md)
+- current runtime flow: [./runtime_flow.md](./runtime_flow.md)
 
 ## Як використовувати
 

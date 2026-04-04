@@ -1,153 +1,210 @@
-# Uppi — автоматизація завантаження Visure та генерації Attestazione
+# UPPI
 
-## Опис проєкту
-Uppi — це Python-додаток, який автоматизує вхід до особистого кабінету **Agenzia delle Entrate**, отримання кадастрових виписок (**visura**) з порталу **SISTER**, їх обробку та генерацію документів **Attestazione** для договорів оренди.
+UPPI автоматизує отримання кадастрових виписок (`visura`) через AE/SISTER,
+обробляє їх у non-browser pipeline, записує дані в PostgreSQL, завантажує
+артефакти в object storage і генерує DOCX-документи `Attestazione`.
 
-Проєкт використовує **Scrapy** разом із **Playwright** для керування браузером, автоматичного логіну та розв’язання CAPTCHA через сервіс **2Captcha**.
+Цей `README.md` є головним entry point документації. Якщо треба зрозуміти
+проєкт з нуля, починайте звідси, а не зі sprint/refactor-plan файлів.
 
----
+## Що робить проєкт
 
-## Локальне розгортання
+Проєкт має дві великі частини:
 
-### Вимоги
-- Python 3.10+
-- PostgreSQL
-- MinIO або AWS S3 / Cloudflare R2
-- Playwright
-- Обліковий запис 2Captcha
+- browser-critical flow:
+  логін у AE, direct SISTER transition, CAPTCHA, завантаження PDF, explicit logout
+- non-browser pipeline:
+  парсинг PDF, синхронізація даних у БД, розрахунок canone, генерація DOCX,
+  upload у storage, audit і failure reporting
 
-### Встановлення залежностей
+Важливо:
+
+- browser-critical semantics захищені окремими invariants
+- `state.json` має protected lifecycle contract
+- structural refactor уже зроблено, але browser flow навмисно не redesign-ився
+
+## Як виглядає runtime flow
+
+Коротко один run проходить так:
+
+1. Spider стартує fresh session, чистить старий `state.json` і `captcha_images/`.
+2. Завантажуються клієнти з `clients.yml`.
+3. Для кожного клієнта вирішується, чи треба реально йти в SISTER, чи можна
+   використати current DB/storage state.
+4. Якщо потрібен browser path:
+   - логін у AE
+   - відкриття SISTER
+   - збереження `state.json`
+   - перехід до `Visure catastali`
+   - CAPTCHA path, якщо з’являється
+   - download PDF
+   - explicit logout
+5. Далі item потрапляє в non-browser pipeline:
+   - `PersonSync`
+   - `VisuraIngest`
+   - `ImmobileSync`
+   - `ContractSync`
+   - `CanoneStage`
+   - `DocumentStage`
+   - `AuditStage`
+6. Наприкінці outer orchestrator робить `commit()` і optional cleanup локального PDF.
+
+Повний розбір:
+- [docs/runtime_flow.md](docs/runtime_flow.md)
+
+## Архітектура коротко
+
+Ключові шари:
+
+- `uppi/spiders/`, `uppi/ae/`:
+  browser-critical orchestration і Playwright flow
+- `uppi/services/visura_processor.py`, `uppi/services/visura_stages.py`:
+  thin orchestrator і stage services
+- `uppi/services/repositories/`:
+  thin repository layer
+- `uppi/services/policies/`:
+  patch/business rules як pure functions
+- `uppi/services/validation/`:
+  warning-first validation layer
+- `uppi/domain/`:
+  models, DB/storage/config seams, calculation strategy, typed exceptions
+- `uppi/services/storage_minio.py`, `uppi/domain/object_storage.py`:
+  object storage boundary
+- `uppi/services/attestazione_generator.py`,
+  `uppi/services/attestazione_template_filler.py`:
+  document generation path
+
+Детально:
+- [docs/current_architecture.md](docs/current_architecture.md)
+
+## З чого почати junior-розробнику
+
+Recommended reading order:
+
+1. [README.md](README.md)
+2. [Поточна архітектура](docs/current_architecture.md)
+3. [Основний runtime flow](docs/runtime_flow.md)
+4. [Protected invariants](docs/refactor_protected_invariants.md)
+5. [Локальний запуск і тести](docs/local_development_and_testing.md)
+6. [Document generation](docs/document_generation.md)
+7. Reference docs за потреби:
+   - [Failure registry](docs/failure_registry_contract.md)
+   - [Transaction / resource safety](docs/transaction_resource_safety_review.md)
+   - [Workspace / local artifacts](docs/workspace_local_artifacts_policy.md)
+   - [state.json lifecycle](docs/state_json_lifecycle_contract.md)
+   - [AWS readiness](docs/aws_readiness_runtime_boundaries.md)
+
+## Карта документації
+
+### Current operational docs
+
+- [docs/current_architecture.md](docs/current_architecture.md)
+  Загальна карта шарів, boundaries і модулів.
+- [docs/runtime_flow.md](docs/runtime_flow.md)
+  Послідовність виконання одного run і одного client/item.
+- [docs/local_development_and_testing.md](docs/local_development_and_testing.md)
+  Встановлення, `.env`, локальний запуск, тести, verification gates.
+- [docs/document_generation.md](docs/document_generation.md)
+  Як працює DOCX generation і де лежить canonical template-filler.
+- [docs/refactor_protected_invariants.md](docs/refactor_protected_invariants.md)
+  Що не можна міняти без high-risk review.
+- [docs/live_smoke_strategy_ae_sister.md](docs/live_smoke_strategy_ae_sister.md)
+  Canonical manual smoke checklist.
+
+### Reference architecture docs
+
+- [docs/failure_registry_contract.md](docs/failure_registry_contract.md)
+- [docs/transaction_resource_safety_review.md](docs/transaction_resource_safety_review.md)
+- [docs/workspace_local_artifacts_policy.md](docs/workspace_local_artifacts_policy.md)
+- [docs/state_json_lifecycle_contract.md](docs/state_json_lifecycle_contract.md)
+- [docs/aws_readiness_runtime_boundaries.md](docs/aws_readiness_runtime_boundaries.md)
+- [docs/logging_foundation.md](docs/logging_foundation.md)
+- [docs/compatibility_shim_migration_uppi_docs.md](docs/compatibility_shim_migration_uppi_docs.md)
+
+### Domain/source materials
+
+Це не operational docs, а reference materials:
+
+- [uppi/docs/accordo_pescara.md](uppi/docs/accordo_pescara.md)
+- [uppi/docs/accordo_pescara.pdf](uppi/docs/accordo_pescara.pdf)
+- [uppi/docs/accordo_pescara_ocr.pdf](uppi/docs/accordo_pescara_ocr.pdf)
+- [uppi/docs/pescara2018_summary.md](uppi/docs/pescara2018_summary.md)
+
+### Historical / archival docs
+
+Ці файли корисні для історії рефакторингу, але не є головними current guides:
+
+- `docs/refactor_execution_plan_*`
+- `docs/refactor_execution_plan_overview.md`
+- `docs/refactor_risk_register.md`
+- `docs/sprint_2_architecture_state.md`
+- `docs/sprint_2_merge_readiness_checklist.md`
+- `docs/sprint_2_closeout_note.md`
+
+## Локальний запуск
+
+Швидкий старт:
+
+1. Створити `.env`
+2. Ініціалізувати БД:
+   `python uppi/utils/db_utils/init_db.py`
+3. Запустити spider:
+   `scrapy crawl uppi`
+
+Повна інструкція:
+- [docs/local_development_and_testing.md](docs/local_development_and_testing.md)
+
+## Тестування і verification
+
+Базова команда:
+
 ```bash
-pip install -r requirements.txt
-playwright install
+venv/bin/python -m pytest -q
 ```
 
----
+Ключові suites:
 
-## Налаштування `.env`
-Створіть файл `.env` у корені проєкту:
+- parser baseline
+- DOCX baseline
+- golden-path pipeline integration
+- repo integration tests on temp Postgres
+- stage service tests
+- validation / failure reporting / retry policy tests
 
-```env
-################AE AND SISTER CONFIGURATION###################
-AE_USERNAME=your_login
-AE_PASSWORD=your_password
-AE_PIN=your_pin
-################END AE AND SISTER CONFIGURATION###############
+Коли потрібен live smoke:
 
-#################AE AND SISTER URLS AND KEYS###################
-# AE URLs 
-AE_LOGIN_URL=https://iampe.agenziaentrate.gov.it/sam/UI/Login?realm=/agenziaentrate
-AE_URL_SERVIZI=https://portale.agenziaentrate.gov.it/PortaleWeb/servizi
+- будь-які зміни навколо browser-critical flow
+- будь-які зміни навколо `state.json`
+- будь-які зміни навколо end-to-end artifact paths/cleanup
 
-# SISTER URLs
-SISTER_SERVIZI_URL=https://sister.agenziaentrate.gov.it/Servizi/
-SISTER_RICERCA_PERSONA_FISICA_URL=https://sister.agenziaentrate.gov.it/Visure/DataRichiesta.do
-SISTER_VISURE_CATASTALI_URL=https://sister.agenziaentrate.gov.it/Visure/Informativa.do?tipo=/T/TM/VCVC_
-SISTER_LOGOUT_URL=https://sister.agenziaentrate.gov.it/Servizi/CloseSessionsSis
-################END AE AND SISTER URLS AND KEYS###############
+Checklist:
+- [docs/live_smoke_strategy_ae_sister.md](docs/live_smoke_strategy_ae_sister.md)
 
-TWO_CAPTCHA_API_KEY=your_2captcha_key
+## Troubleshooting: куди дивитися
 
-#################POSTGRES CONFIGURATION####################
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=uppi_db
-DB_USER=uppi_user
-DB_PASSWORD=uppi_password
-DB_SSL_MODE=prefer
-#################END POSTGRES CONFIGURATION###################
+- Проблема з логіном, direct SISTER, logout, CAPTCHA, `state.json`:
+  [docs/refactor_protected_invariants.md](docs/refactor_protected_invariants.md),
+  [docs/state_json_lifecycle_contract.md](docs/state_json_lifecycle_contract.md)
+- Проблема з runtime flow:
+  [docs/runtime_flow.md](docs/runtime_flow.md)
+- Проблема з DB / storage / partial failures:
+  [docs/transaction_resource_safety_review.md](docs/transaction_resource_safety_review.md)
+- Проблема з DOCX generation:
+  [docs/document_generation.md](docs/document_generation.md)
+- Проблема з локальними артефактами:
+  [docs/workspace_local_artifacts_policy.md](docs/workspace_local_artifacts_policy.md)
+- Проблема з failure reporting / retry classification:
+  [docs/failure_registry_contract.md](docs/failure_registry_contract.md)
 
-#################S3 CONFIGURATION#############################
-S3_ENDPOINT=localhost:9000
-S3_ACCESS_KEY=minioadmin
-S3_SECRET_KEY=minioadmin
-S3_SECURE=False
-VISURE_BUCKET=uppi-bucket
-ATTESTAZIONI_BUCKET=attestazioni
-#################END S3 CONFIGURATION##########################
-UPPI_CLIENTS_YAML=clients/clients.yml
+## Важливі заборони
 
-# Delete local visura file after upload to MinIO/Aiven
-DELETE_LOCAL_VISURA_AFTER_UPLOAD=True
-# Prune old immobili without contracts from DB
-PRUNE_OLD_IMMOBILI_WITHOUT_CONTRACTS=True
-```
+Без окремого high-risk review не можна:
 
----
+- міняти AE/SISTER flow
+- міняти `state.json` lifecycle semantics
+- міняти selector order / wait / click / logout semantics
+- робити blind browser retry
+- робити transaction-boundary redesign під виглядом локального cleanup
 
-## Ініціалізація бази даних
-```bash
-python uppi/utils/db_utils/init_db.py
-```
-
-Створюються таблиці:
-- addresses
-- attestazioni
-- canone_calcoli
-- contracts
-- immobile_elements
-- immobili
-- persons
-- visure
-
----
-
-## Основний флоу роботи
-
-1. Зчитування клієнтів з `clients/clients.yml`
-2. Перевірка наявності актуальної visura
-3. Логін в Agenzia Entrate через Playwright
-4. Перехід на SISTER та пошук за Codice Fiscale
-5. Розв’язання CAPTCHA через 2Captcha
-6. Завантаження PDF visura
-7. Збереження файлів у S3 та метаданих у PostgreSQL
-8. Парсинг PDF та збереження об’єктів нерухомості
-9. Генерація Attestazione у форматі DOCX
-
----
-
-## Запуск
-
-```bash
-scrapy crawl uppi
-```
-
----
-
-## Структура проєкту
-
-```
-uppi/
-├── ae/          # авторизація, CAPTCHA
-├── spiders/     # Scrapy spiders
-├── services/    # БД, S3, генерація документів
-├── parsers/     # PDF-парсинг
-├── domain/      # бізнес-моделі
-├── cli/         # CLI-утиліти
-├── utils/       # ініціалізація, логування
-clients/
-requirements.txt
-```
-
----
-
-## Зберігання файлів
-
-- Visure: `visure/<CF>.pdf`
-- Attestazioni: `attestazioni/<CF>/<ContractID>.docx`
-
-
-## Логування
-Логи виводяться в stdout. Для Scrapy використовуйте налаштування в `settings.py`.
-
----
-
-## Безпека
-- Не комітьте `.env`
-- Міняйте ключі перед продакшеном
-- Обмежуйте доступ до S3
-
----
-
-## Ліцензія
-MIT
+Canonical source:
+- [docs/refactor_protected_invariants.md](docs/refactor_protected_invariants.md)

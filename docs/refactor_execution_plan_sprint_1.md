@@ -1,5 +1,11 @@
 # Refactor Execution Plan — Sprint 1
 
+> Historical / archival planning artifact.
+> Sprint 1 already implemented; цей файл потрібен лише як історія rollout-плану.
+> Для актуального стану системи дивіться [README.md](../README.md),
+> [Поточну архітектуру](./current_architecture.md) і
+> [Protected invariants](./refactor_protected_invariants.md).
+
 ## Sprint Goal
 
 Головна мета Sprint 1: прибрати сліпі зони перед рефакторингом і зробити проект спостережуваним, тестованим і безпечнішим без зміни runtime semantics.
@@ -157,4 +163,3 @@
 - Якщо logging integration у browser-adjacent module викликає підозру, rollback простий: revert only logging patch without touching flow logic.
 - Drift fixes у tooling тримати окремими PR від production-adjacent changes.
 - Characterization tests не мають вимагати code moves.
-

@@ -5,11 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 import logging
 
+from uppi.config.workspace import WorkspaceConfig, get_downloads_dir
+
 from .immobile import Immobile
 
 logger = logging.getLogger(__name__)
 
-DOWNLOADS_DIR = Path(__file__).resolve().parents[2] / "downloads"
+DOWNLOADS_DIR = get_downloads_dir()
 
 
 def slugify_immobile(imm: Immobile) -> str:
@@ -40,28 +42,35 @@ def slugify_immobile(imm: Immobile) -> str:
     return slug
 
 
-def get_client_dir(cf: str) -> Path:
-    """Повертає шлях до каталогу для заданого CF та створює його за потреби."""
-    client_dir = DOWNLOADS_DIR / cf
+def get_client_dir(cf: str, *, workspace_config: WorkspaceConfig | None = None) -> Path:
+    """Повертає шлях до каталогу клієнта з optional workspace seam."""
+    downloads_dir = workspace_config.downloads_dir if workspace_config is not None else get_downloads_dir()
+    client_dir = downloads_dir / cf
     client_dir.mkdir(parents=True, exist_ok=True)
     logger.debug("[STORAGE] get_client_dir(%s) → %s", cf, client_dir)
     return client_dir
 
 
-def get_visura_path(cf: str) -> Path:
+def get_visura_path(cf: str, *, workspace_config: WorkspaceConfig | None = None) -> Path:
     """Шлях до файлу VISURA_<cf>.pdf у каталозі клієнта."""
-    path = get_client_dir(cf) / f"VISURA_{cf}.pdf"
+    path = get_client_dir(cf, workspace_config=workspace_config) / f"VISURA_{cf}.pdf"
     logger.debug("[STORAGE] get_visura_path(%s) → %s", cf, path)
     return path
 
 
-def get_attestazione_path(cf: str, contract_id: str, imm: Immobile) -> Path:
+def get_attestazione_path(
+    cf: str,
+    contract_id: str,
+    imm: Immobile,
+    *,
+    workspace_config: WorkspaceConfig | None = None,
+) -> Path:
     """
     Шлях до файлу ATTESTAZIONE_<cf>_<contract_id>_<slug>.docx у каталозі клієнта.
     contract_id додаємо, щоб уникнути колізій (1 immobile -> N contracts).
     """
     slug = slugify_immobile(imm)
     safe_contract_id = str(contract_id).replace("/", "_")
-    path = get_client_dir(cf) / f"ATTESTAZIONE_{cf}_{safe_contract_id}_{slug}.docx"
+    path = get_client_dir(cf, workspace_config=workspace_config) / f"ATTESTAZIONE_{cf}_{safe_contract_id}_{slug}.docx"
     logger.debug("[STORAGE] get_attestazione_path(%s, %s, ...) → %s", cf, contract_id, path)
     return path

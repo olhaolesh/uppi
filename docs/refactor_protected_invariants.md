@@ -3,6 +3,8 @@
 Це canonical-документ для protected invariants у browser-critical зоні.
 Якщо інші docs скорочують або переказують цей контракт, пріоритет має саме цей
 файл. Детальний live smoke checklist див. у `docs/live_smoke_strategy_ae_sister.md`.
+Technical ownership note для `state.json` lifecycle див. у
+`docs/state_json_lifecycle_contract.md`.
 
 ## Browser-Critical Invariants
 

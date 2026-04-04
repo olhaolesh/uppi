@@ -1,5 +1,10 @@
 # Accordo Territoriale Pescara 2018 – технічне резюме для розрахунку canone
 
+> Working reference note.
+> Це допоміжний технічний конспект для calculation-domain і не є canonical
+> operational documentation про поточну архітектуру проєкту.
+> Для загальної навігації починайте з [README.md](../../README.md).
+
 Цей документ — технічний конспект Accordo Territoriale Comune di Pescara (2018)
 для подальшої реалізації в коді (uppi.domain.pescara2018_*).
 

@@ -11,7 +11,9 @@ from decouple import config
 from itemadapter import ItemAdapter
 
 from uppi.config.app_config import VisuraProcessorRuntimeConfig
+from uppi.domain.calculation_strategy import CalculationStrategy
 from uppi.domain.db import get_pg_connection
+from uppi.domain.failure_registry import FailureStage
 from uppi.domain.immobile import Immobile
 from uppi.domain.object_storage import ObjectStorage
 from uppi.domain.storage import get_client_dir, get_visura_path
@@ -19,6 +21,7 @@ from uppi.parsers.visura_pdf_parser import VisuraParser
 from uppi.services.db_repo import (
     db_load_immobili,
 )
+from uppi.services.failure_registry import FailureRegistryRecorder, is_failure_reported
 from uppi.services.storage_minio import StorageService
 from uppi.services.visura_stages import (
     AuditStageService,
@@ -112,6 +115,7 @@ class VisuraProcessor:
         connection_factory: Callable = get_pg_connection,
         parser_factory: Callable[[], VisuraParser] = VisuraParser,
         runtime_config: Optional[VisuraProcessorRuntimeConfig] = None,
+        calculation_strategy: CalculationStrategy | None = None,
         person_sync_service: PersonSyncService | None = None,
         visura_ingest_service: VisuraIngestService | None = None,
         immobile_sync_service: ImmobileSyncService | None = None,
@@ -119,6 +123,7 @@ class VisuraProcessor:
         canone_stage_service: CanoneStageService | None = None,
         document_stage_service: DocumentStageService | None = None,
         audit_stage_service: AuditStageService | None = None,
+        failure_registry_recorder: FailureRegistryRecorder | None = None,
     ):
         """
         Створює процесор із explicit dependency seams і current-compatible defaults.
@@ -138,20 +143,31 @@ class VisuraProcessor:
         self.connection_factory = connection_factory
         self.parser_factory = parser_factory
         self.template_path = resolved_runtime_config.template_path
-        self.person_sync_service = person_sync_service or PersonSyncService()
+        self.failure_registry_recorder = failure_registry_recorder or FailureRegistryRecorder()
+        self.person_sync_service = person_sync_service or PersonSyncService(
+            failure_recorder=self.failure_registry_recorder,
+        )
         self.visura_ingest_service = visura_ingest_service or VisuraIngestService(
             storage=resolved_storage,
             storage_service=self.storage_service,
             pdf_lookup=find_local_visura_pdf,
+            failure_recorder=self.failure_registry_recorder,
         )
         self.immobile_sync_service = immobile_sync_service or ImmobileSyncService(
             parser_factory=self.parser_factory,
             prune_old_immobili_without_contracts=self.runtime_config.prune_old_immobili_without_contracts,
+            failure_recorder=self.failure_registry_recorder,
         )
-        self.contract_sync_service = contract_sync_service or ContractSyncService()
-        self.canone_stage_service = canone_stage_service or CanoneStageService()
+        self.contract_sync_service = contract_sync_service or ContractSyncService(
+            failure_recorder=self.failure_registry_recorder,
+        )
+        self.canone_stage_service = canone_stage_service or CanoneStageService(
+            calculation_strategy=calculation_strategy,
+            failure_recorder=self.failure_registry_recorder,
+        )
         self.audit_stage_service = audit_stage_service or AuditStageService(
             runtime_config=self.runtime_config,
+            failure_recorder=self.failure_registry_recorder,
         )
         self.document_stage_service = document_stage_service or DocumentStageService(
             storage=resolved_storage,
@@ -159,11 +175,13 @@ class VisuraProcessor:
             runtime_config=self.runtime_config,
             template_path=self.template_path,
             audit_stage=self.audit_stage_service,
+            failure_recorder=self.failure_registry_recorder,
         )
 
     def process_item(self, item, spider):
         """Повністю обробляє один item після етапу browser download."""
         adapter = ItemAdapter(item)
+        run_id = self.failure_registry_recorder.resolve_run_id(adapter=adapter, spider=spider)
         locatore_cf = clean_str(adapter.get("locatore_cf") or adapter.get("codice_fiscale"))
 
         if not locatore_cf:
@@ -177,6 +195,7 @@ class VisuraProcessor:
             person_sync = self.person_sync_service.sync(
                 conn,
                 adapter,
+                run_id=run_id,
                 locatore_cf=locatore_cf,
                 cond_cf=cond_cf,
             )
@@ -184,6 +203,7 @@ class VisuraProcessor:
             visura_ingest = self.visura_ingest_service.ingest(
                 conn,
                 adapter,
+                run_id=run_id,
                 locatore_cf=locatore_cf,
             )
 
@@ -191,6 +211,7 @@ class VisuraProcessor:
                 conn,
                 spider,
                 adapter,
+                run_id=run_id,
                 locatore_cf=locatore_cf,
                 loc_addr_id=person_sync.loc_addr_id,
                 visura_ingest=visura_ingest,
@@ -205,6 +226,8 @@ class VisuraProcessor:
                 contract_sync = self.contract_sync_service.sync(
                     conn,
                     adapter,
+                    run_id=run_id,
+                    client_cf=locatore_cf,
                     immobile_id=immobile_id,
                 )
 
@@ -212,6 +235,8 @@ class VisuraProcessor:
                     conn,
                     spider,
                     adapter,
+                    run_id=run_id,
+                    locatore_cf=locatore_cf,
                     imm=imm,
                     contract_id=contract_sync.contract_id,
                     contract_ctx=contract_sync.contract_ctx,
@@ -221,6 +246,7 @@ class VisuraProcessor:
                     conn,
                     spider,
                     adapter,
+                    run_id=run_id,
                     imm=imm,
                     contract_ctx=canone_stage.contract_ctx,
                     contract_id=contract_sync.contract_id,
@@ -238,6 +264,13 @@ class VisuraProcessor:
             return item
 
         except Exception as e:
+            if not is_failure_reported(e):
+                self.failure_registry_recorder.record_failure(
+                    run_id=run_id,
+                    client_cf=locatore_cf,
+                    stage=FailureStage.PIPELINE_FATAL,
+                    error=e,
+                )
             spider.logger.exception("[PIPELINE] Fatal error processing CF %s: %s", locatore_cf, e)
             if conn:
                 conn.rollback()

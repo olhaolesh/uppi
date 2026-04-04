@@ -10,12 +10,13 @@ from typing import Any, Dict, List
 import fitz
 import camelot
 
+from uppi.config.workspace import get_downloads_dir
 from uppi.parsers.address_parser import parse_address
 from uppi.logging_config import configure_uppi_logging
 
 logger = logging.getLogger(__name__)
 
-DOWNLOADS_DIR = Path(__file__).resolve().parents[2] / "downloads"
+DOWNLOADS_DIR = get_downloads_dir()
 
 PDF_PATH = DOWNLOADS_DIR / "sample_visura.pdf"
 

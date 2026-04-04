@@ -24,7 +24,12 @@ DB_SSL_MODE = config("DB_SSL_MODE", default="prefer")
 
 
 def get_default_database_config() -> DatabaseConfig:
-    """Повертає canonical DB-конфіг, сумісний з поточними module defaults."""
+    """Повертає canonical DB-конфіг, сумісний з поточними module defaults.
+
+    Current source лишається env-driven. Future provider-backed runtime
+    (наприклад SSM/Secrets Manager) має постачати той самий `DatabaseConfig`
+    без зміни connection contract нижче.
+    """
     return DatabaseConfig(
         host=DB_HOST,
         port=int(DB_PORT),
@@ -58,6 +63,8 @@ def get_pg_connection(
     Важливо:
     - autocommit = False (транзакції керуються явно)
     - при виключеннях нехай падає, бо це критична інфраструктура
+    - factory seam already дозволяє future runtime/provider work без зміни
+      transaction ownership
     Retry:
     - тільки transient network / channel errors
     - тільки на connect()

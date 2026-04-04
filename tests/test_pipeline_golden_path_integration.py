@@ -12,6 +12,7 @@ from itemadapter import ItemAdapter
 
 import uppi.domain.storage as storage_module
 import uppi.parsers.visura_pdf_parser as parser_module
+from uppi.config.workspace import WorkspaceConfig
 from uppi.domain.clients import _parse_yaml
 from uppi.domain.object_storage import ObjectStorage, ObjectStorageConfig
 from uppi.docs.attestazione_template_filler import fill_underscored
@@ -154,9 +155,11 @@ class _FakeTable:
 def _patch_parser_io(monkeypatch, fixture_data: dict):
     """Підміняє зовнішні залежності контрольованими тестовими double-об’єктами."""
     def fake_open(_pdf_path):
+        """Повертає контрольований PDF double для baseline pipeline сценарію."""
         return _FakeDoc(fixture_data.get("pages", []))
 
     def fake_read_pdf(_pdf_path, *, pages: str, flavor: str):
+        """Повертає контрольовані Camelot-таблиці для заданої сторінки."""
         assert flavor == "lattice"
         return [_FakeTable(rows) for rows in fixture_data.get("tables", {}).get(pages, [])]
 
@@ -457,8 +460,13 @@ def test_golden_path_after_visura_download_stitches_yaml_parser_db_docx_and_stor
     contract_ctx = db_load_contract_context(read_conn, contract_id)
     params = build_template_params(adapter, imm, contract_ctx)
 
-    monkeypatch.setattr(storage_module, "DOWNLOADS_DIR", tmp_path / "downloads")
-    attestazione_path = storage_module.get_attestazione_path(locatore_cf, contract_id, imm)
+    workspace_cfg = WorkspaceConfig.from_env(workspace_root=tmp_path)
+    attestazione_path = storage_module.get_attestazione_path(
+        locatore_cf,
+        contract_id,
+        imm,
+        workspace_config=workspace_cfg,
+    )
     attestazione_object_name = storage.attestazione_object_name(locatore_cf, contract_id)
 
     assert contract_ctx["elements"] == {"a1": "X", "b2": "X", "d5": "Y"}

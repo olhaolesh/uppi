@@ -130,6 +130,7 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
             params[f"{{{{{key.lower()}}}}}"] = val              # {{a1}}
 
     def cnt(keys: List[str]) -> int:
+        """Рахує, скільки елементів групи реально позначені в поточному контексті."""
         return sum(1 for k in keys if str(elements.get(k, "") or "").strip() != "")
 
     params["{{A_CNT}}"] = str(cnt(["a1", "a2"]))

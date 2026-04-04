@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 import uppi.ae.captcha as captcha_module
 from uppi.ae.captcha import _solve_captcha
@@ -116,7 +117,7 @@ def test_playwright_request_logging_uses_metadata_only(caplog):
 def test_captcha_solver_logging_does_not_emit_raw_result_or_solution(monkeypatch):
     """Перевіряє сценарій, описаний у назві тесту."""
     monkeypatch.setattr(captcha_module, "TwoCaptcha", _FakeTwoCaptcha)
-    monkeypatch.setattr(captcha_module.os, "makedirs", lambda *args, **kwargs: None)
+    monkeypatch.setattr(captcha_module, "get_captcha_client_dir", lambda _cf: Path("/tmp/captcha_images/RSSMRA80A01H501Z"))
     logger = _RecordingLogger()
 
     code = asyncio.run(

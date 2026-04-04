@@ -20,6 +20,7 @@ from decouple import config
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from uppi.ae.uppi_selectors import UppiSelectors
+from uppi.config.workspace import save_state_json_snapshot
 
 # URL сторінки «Visure catastali» для прямого переходу до форми пошуку
 SISTER_VISURE_CATASTALI_URL = config("SISTER_VISURE_CATASTALI_URL")
@@ -110,8 +111,11 @@ async def open_sister_service(
         # в SISTER у межах поточної сесії. Цю точку не можна перетворювати на
         # reusable persistent state або переносити без окремого high-risk аналізу.
         try:
-            await sister_page.context.storage_state(path="state.json")
-            logger.info("[OPEN_SISTER] storage_state saved to state.json")
+            await save_state_json_snapshot(
+                sister_page.context,
+                logger=logger,
+                reason="direct_sister_transition",
+            )
         except Exception as e:
             logger.warning("[OPEN_SISTER] Failed to save storage_state to state.json: %s", e)
     except PlaywrightTimeoutError as e:

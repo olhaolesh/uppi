@@ -1,176 +1,84 @@
-2026-04-04 16:30:28 | INFO | uppi | start:98 | [START] UppiSpider starting...
-2026-04-04 16:30:28 | INFO | uppi | start:103 | [START] Cleaning old state.json if present
-2026-04-04 16:30:28 | INFO | uppi | start:112 | [START] Cleaning old captcha_images folder if present
-2026-04-04 16:30:28 | INFO | uppi.domain.clients | _parse_yaml:119 | [CLIENTS] Завантажено 1 клієнтів із /Users/nitort/projects/uppi/clients/clients.yml
-2026-04-04 16:30:28 | INFO | uppi | start:127 | [START] Loaded 1 clients from clients.yml
-2026-04-04 16:30:30 | INFO | uppi | start:170 | [START] Skip SISTER for <cf:redacted> (reason=fresh_enough)
-2026-04-04 16:30:35 | INFO | uppi.domain.object_storage | upload_file:129 | [S3] Uploaded /Users/nitort/projects/uppi/downloads/<cf:redacted>/ATTESTAZIONE_LSHLDY60R46Z138O_b46d2682-b44a-4df1-886c-15f0cc63d48d_F30_N1784_S10_Z2_CATC2_CL1_CONS77m².docx -> attestazioni/attestazioni/<cf:redacted>/b46d2682-b44a-4df1-886c-15f0cc63d48d.docx
-2026-04-04 16:30:39 | INFO | uppi.domain.object_storage | upload_file:129 | [S3] Uploaded /Users/nitort/projects/uppi/downloads/<cf:redacted>/ATTESTAZIONE_LSHLDY60R46Z138O_417f5bd9-6650-4277-99bc-1e8f834a0595_F30_N1784_S7_Z2_CATA3_CL3_CONS4,5 vani.docx -> attestazioni/attestazioni/<cf:redacted>/417f5bd9-6650-4277-99bc-1e8f834a0595.docx
-2026-04-04 16:30:39 | INFO | uppi | start:196 | [START] No clients require SISTER fetch. Spider finished.
-2026-04-04 16:32:13 | INFO | uppi | start:98 | [START] UppiSpider starting...
-2026-04-04 16:32:13 | INFO | uppi | start:103 | [START] Cleaning old state.json if present
-2026-04-04 16:32:13 | INFO | uppi | start:112 | [START] Cleaning old captcha_images folder if present
-2026-04-04 16:32:13 | INFO | uppi.domain.clients | _parse_yaml:119 | [CLIENTS] Завантажено 1 клієнтів із /Users/nitort/projects/uppi/clients/clients.yml
-2026-04-04 16:32:13 | INFO | uppi | start:127 | [START] Loaded 1 clients from clients.yml
-2026-04-04 16:32:15 | INFO | uppi | start:187 | [START] Will fetch visura from SISTER for <cf:redacted> (force_update=True, reason=force_update_visura)
-2026-04-04 16:32:15 | INFO | uppi | start:199 | [START] 1 clients require SISTER fetch
-2026-04-04 16:32:17 | INFO | uppi | authenticate_user:45 | [LOGIN] Starting AE authentication via Fisconline tab
-2026-04-04 16:32:18 | INFO | uppi | authenticate_user:63 | [LOGIN] 'Accedi' clicked, waiting for profile info marker
-2026-04-04 16:32:20 | INFO | uppi | authenticate_user:68 | [LOGIN] Login successful, PROFILE_INFO found
-2026-04-04 16:32:20 | INFO | uppi | open_sister_service:53 | [OPEN_SISTER] Navigating to AE services home: https://portale.agenziaentrate.gov.it/PortaleWeb/servizi
-2026-04-04 16:32:22 | INFO | uppi | open_sister_service:74 | [OPEN_SISTER] 'I tuoi preferiti' section opened
-2026-04-04 16:32:23 | INFO | uppi | open_sister_service:82 | [OPEN_SISTER] SISTER page opened in a new tab
-2026-04-04 16:32:25 | INFO | uppi | open_sister_service:105 | [OPEN_SISTER] 'Conferma' button clicked on SISTER welcome page
-2026-04-04 16:32:28 | INFO | uppi | open_sister_service:114 | [OPEN_SISTER] storage_state saved to state.json
-2026-04-04 16:32:28 | INFO | uppi | login_and_fetch_visura:284 | [CLIENT 1/1] Processing CF=<cf:redacted>, comune=PESCARA, tipo_catasto=F, ufficio=PESCARA Territorio
-2026-04-04 16:32:28 | INFO | uppi | navigate_to_visure_catastali:145 | [NAVIGATE] Start navigation to Visure catastali for CF=<cf:redacted>, comune=PESCARA, catasto=F, ufficio=PESCARA Territorio
-2026-04-04 16:32:28 | ERROR | uppi | navigate_to_visure_catastali:244 | [NAVIGATE] Unexpected error during navigation to Visure catastali: Page.goto: net::ERR_NAME_NOT_RESOLVED at https://sister.agenziaentrate.gov.it/Visure/Informativa.do?tipo=/T/TM/VCVC_
-Call log:
-  - navigating to "https://sister.agenziaentrate.gov.it/Visure/Informativa.do?tipo=/T/TM/VCVC_", waiting until "networkidle"
-Traceback (most recent call last):
-  File "/Users/nitort/projects/uppi/uppi/ae/sister_navigation.py", line 155, in navigate_to_visure_catastali
-    await sister_page.goto(SISTER_VISURE_CATASTALI_URL, wait_until="networkidle", timeout=60_000)
-  File "/Users/nitort/projects/uppi/venv/lib/python3.11/site-packages/playwright/async_api/_generated.py", line 8992, in goto
-    await self._impl_obj.goto(
-  File "/Users/nitort/projects/uppi/venv/lib/python3.11/site-packages/playwright/_impl/_page.py", line 556, in goto
-    return await self._main_frame.goto(**locals_to_params(locals()))
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/nitort/projects/uppi/venv/lib/python3.11/site-packages/playwright/_impl/_frame.py", line 153, in goto
-    await self._channel.send(
-  File "/Users/nitort/projects/uppi/venv/lib/python3.11/site-packages/playwright/_impl/_connection.py", line 69, in send
-    return await self._connection.wrap_api_call(
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/nitort/projects/uppi/venv/lib/python3.11/site-packages/playwright/_impl/_connection.py", line 558, in wrap_api_call
-    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
-playwright._impl._errors.Error: Page.goto: net::ERR_NAME_NOT_RESOLVED at https://sister.agenziaentrate.gov.it/Visure/Informativa.do?tipo=/T/TM/VCVC_
-Call log:
-  - navigating to "https://sister.agenziaentrate.gov.it/Visure/Informativa.do?tipo=/T/TM/VCVC_", waiting until "networkidle"
-
-2026-04-04 16:32:28 | WARNING | uppi | login_and_fetch_visura:311 | [CLIENT 1/1] Navigation to Visure catastali failed for <cf:redacted>
-2026-04-04 16:32:28 | ERROR | uppi.domain.db | get_pg_connection:71 | [DB] Не вдалося підключитися до PostgreSQL: could not translate host name "pg-uppi65100-olhaolesh25-c526.d.aivencloud.com" to address: nodename nor servname provided, or not known
-Traceback (most recent call last):
-  File "/Users/nitort/projects/uppi/uppi/domain/db.py", line 67, in get_pg_connection
-    conn = resolved_connect_factory(**build_pg_connection_kwargs(db_config))
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/nitort/projects/uppi/venv/lib/python3.11/site-packages/psycopg2/__init__.py", line 122, in connect
-    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-psycopg2.OperationalError: could not translate host name "pg-uppi65100-olhaolesh25-c526.d.aivencloud.com" to address: nodename nor servname provided, or not known
-
-2026-04-04 16:32:28 | WARNING | uppi.domain.db | log_it:65 | Retrying uppi.domain.db.get_pg_connection in 1.0 seconds as it raised OperationalError: could not translate host name "pg-uppi65100-olhaolesh25-c526.d.aivencloud.com" to address: nodename nor servname provided, or not known
-.
-2026-04-04 16:32:29 | ERROR | uppi.domain.db | get_pg_connection:71 | [DB] Не вдалося підключитися до PostgreSQL: could not translate host name "pg-uppi65100-olhaolesh25-c526.d.aivencloud.com" to address: nodename nor servname provided, or not known
-Traceback (most recent call last):
-  File "/Users/nitort/projects/uppi/uppi/domain/db.py", line 67, in get_pg_connection
-    conn = resolved_connect_factory(**build_pg_connection_kwargs(db_config))
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/nitort/projects/uppi/venv/lib/python3.11/site-packages/psycopg2/__init__.py", line 122, in connect
-    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-psycopg2.OperationalError: could not translate host name "pg-uppi65100-olhaolesh25-c526.d.aivencloud.com" to address: nodename nor servname provided, or not known
-
-2026-04-04 16:32:29 | WARNING | uppi.domain.db | log_it:65 | Retrying uppi.domain.db.get_pg_connection in 2.0 seconds as it raised OperationalError: could not translate host name "pg-uppi65100-olhaolesh25-c526.d.aivencloud.com" to address: nodename nor servname provided, or not known
-.
-2026-04-04 16:32:31 | ERROR | uppi.domain.db | get_pg_connection:71 | [DB] Не вдалося підключитися до PostgreSQL: could not translate host name "pg-uppi65100-olhaolesh25-c526.d.aivencloud.com" to address: nodename nor servname provided, or not known
-Traceback (most recent call last):
-  File "/Users/nitort/projects/uppi/uppi/domain/db.py", line 67, in get_pg_connection
-    conn = resolved_connect_factory(**build_pg_connection_kwargs(db_config))
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/nitort/projects/uppi/venv/lib/python3.11/site-packages/psycopg2/__init__.py", line 122, in connect
-    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-psycopg2.OperationalError: could not translate host name "pg-uppi65100-olhaolesh25-c526.d.aivencloud.com" to address: nodename nor servname provided, or not known
-
-2026-04-04 16:32:33 | INFO | uppi | _logout_in_context:514 | [LOGOUT] Context closed
-2026-04-04 16:36:42 | INFO | uppi | start:98 | [START] UppiSpider starting...
-2026-04-04 16:36:42 | INFO | uppi | start:103 | [START] Cleaning old state.json if present
-2026-04-04 16:36:42 | INFO | uppi | start:107 | [START] Old state.json removed
-2026-04-04 16:36:42 | INFO | uppi | start:112 | [START] Cleaning old captcha_images folder if present
-2026-04-04 16:36:42 | INFO | uppi.domain.clients | _parse_yaml:119 | [CLIENTS] Завантажено 1 клієнтів із /Users/nitort/projects/uppi/clients/clients.yml
-2026-04-04 16:36:42 | INFO | uppi | start:127 | [START] Loaded 1 clients from clients.yml
-2026-04-04 16:36:43 | INFO | uppi | start:187 | [START] Will fetch visura from SISTER for <cf:redacted> (force_update=True, reason=force_update_visura)
-2026-04-04 16:36:43 | INFO | uppi | start:199 | [START] 1 clients require SISTER fetch
-2026-04-04 16:36:45 | INFO | uppi | authenticate_user:45 | [LOGIN] Starting AE authentication via Fisconline tab
-2026-04-04 16:36:46 | INFO | uppi | authenticate_user:63 | [LOGIN] 'Accedi' clicked, waiting for profile info marker
-2026-04-04 16:36:48 | INFO | uppi | authenticate_user:68 | [LOGIN] Login successful, PROFILE_INFO found
-2026-04-04 16:36:48 | INFO | uppi | open_sister_service:53 | [OPEN_SISTER] Navigating to AE services home: https://portale.agenziaentrate.gov.it/PortaleWeb/servizi
-2026-04-04 16:37:17 | INFO | uppi | open_sister_service:75 | [OPEN_SISTER] 'I tuoi preferiti' section opened
-2026-04-04 16:37:20 | INFO | uppi | open_sister_service:83 | [OPEN_SISTER] SISTER page opened in a new tab
-2026-04-04 16:37:33 | INFO | uppi | open_sister_service:106 | [OPEN_SISTER] 'Conferma' button clicked on SISTER welcome page
-2026-04-04 16:37:36 | INFO | uppi | open_sister_service:115 | [OPEN_SISTER] storage_state saved to state.json
-2026-04-04 16:37:36 | INFO | uppi | login_and_fetch_visura:284 | [CLIENT 1/1] Processing CF=<cf:redacted>, comune=PESCARA, tipo_catasto=F, ufficio=PESCARA Territorio
-2026-04-04 16:37:36 | INFO | uppi | navigate_to_visure_catastali:146 | [NAVIGATE] Start navigation to Visure catastali for CF=<cf:redacted>, comune=PESCARA, catasto=F, ufficio=PESCARA Territorio
-2026-04-04 16:37:52 | INFO | uppi | navigate_to_visure_catastali:165 | [NAVIGATE] 'Conferma Lettura' not found (maybe already accepted)
-2026-04-04 16:37:57 | WARNING | uppi | navigate_to_visure_catastali:175 | [NAVIGATE] Ufficio selection failed or timed out
-2026-04-04 16:37:57 | WARNING | uppi | login_and_fetch_visura:311 | [CLIENT 1/1] Navigation to Visure catastali failed for <cf:redacted>
-2026-04-04 16:38:03 | INFO | uppi.domain.object_storage | upload_file:129 | [S3] Uploaded /Users/nitort/projects/uppi/downloads/<cf:redacted>/ATTESTAZIONE_LSHLDY60R46Z138O_b46d2682-b44a-4df1-886c-15f0cc63d48d_F30_N1784_S10_Z2_CATC2_CL1_CONS77m².docx -> attestazioni/attestazioni/<cf:redacted>/b46d2682-b44a-4df1-886c-15f0cc63d48d.docx
-2026-04-04 16:38:06 | INFO | uppi.domain.object_storage | upload_file:129 | [S3] Uploaded /Users/nitort/projects/uppi/downloads/<cf:redacted>/ATTESTAZIONE_LSHLDY60R46Z138O_417f5bd9-6650-4277-99bc-1e8f834a0595_F30_N1784_S7_Z2_CATA3_CL3_CONS4,5 vani.docx -> attestazioni/attestazioni/<cf:redacted>/417f5bd9-6650-4277-99bc-1e8f834a0595.docx
-2026-04-04 16:38:13 | INFO | uppi | _logout_in_context:514 | [LOGOUT] Context closed
-2026-04-04 16:43:21 | INFO | uppi | start:98 | [START] UppiSpider starting...
-2026-04-04 16:43:21 | INFO | uppi | start:103 | [START] Cleaning old state.json if present
-2026-04-04 16:43:21 | INFO | uppi | start:107 | [START] Old state.json removed
-2026-04-04 16:43:21 | INFO | uppi | start:112 | [START] Cleaning old captcha_images folder if present
-2026-04-04 16:43:21 | INFO | uppi.domain.clients | _parse_yaml:119 | [CLIENTS] Завантажено 1 клієнтів із /Users/nitort/projects/uppi/clients/clients.yml
-2026-04-04 16:43:21 | INFO | uppi | start:127 | [START] Loaded 1 clients from clients.yml
-2026-04-04 16:43:23 | INFO | uppi | start:187 | [START] Will fetch visura from SISTER for <cf:redacted> (force_update=True, reason=force_update_visura)
-2026-04-04 16:43:23 | INFO | uppi | start:199 | [START] 1 clients require SISTER fetch
-2026-04-04 16:43:24 | INFO | uppi | authenticate_user:45 | [LOGIN] Starting AE authentication via Fisconline tab
-2026-04-04 16:43:26 | INFO | uppi | authenticate_user:63 | [LOGIN] 'Accedi' clicked, waiting for profile info marker
-2026-04-04 16:43:28 | INFO | uppi | authenticate_user:68 | [LOGIN] Login successful, PROFILE_INFO found
-2026-04-04 16:43:28 | INFO | uppi | open_sister_service:53 | [OPEN_SISTER] Navigating to AE services home: https://portale.agenziaentrate.gov.it/PortaleWeb/servizi
-2026-04-04 16:43:33 | INFO | uppi | open_sister_service:75 | [OPEN_SISTER] 'I tuoi preferiti' section opened
-2026-04-04 16:43:35 | INFO | uppi | open_sister_service:83 | [OPEN_SISTER] SISTER page opened in a new tab
-2026-04-04 16:43:41 | INFO | uppi | open_sister_service:106 | [OPEN_SISTER] 'Conferma' button clicked on SISTER welcome page
-2026-04-04 16:43:45 | INFO | uppi | open_sister_service:115 | [OPEN_SISTER] storage_state saved to state.json
-2026-04-04 16:43:45 | INFO | uppi | login_and_fetch_visura:284 | [CLIENT 1/1] Processing CF=<cf:redacted>, comune=PESCARA, tipo_catasto=F, ufficio=PESCARA Territorio
-2026-04-04 16:43:45 | INFO | uppi | navigate_to_visure_catastali:146 | [NAVIGATE] Start navigation to Visure catastali for CF=<cf:redacted>, comune=PESCARA, catasto=F, ufficio=PESCARA Territorio
-2026-04-04 16:43:53 | INFO | uppi | navigate_to_visure_catastali:165 | [NAVIGATE] 'Conferma Lettura' not found (maybe already accepted)
-2026-04-04 16:43:58 | WARNING | uppi | navigate_to_visure_catastali:175 | [NAVIGATE] Ufficio selection failed or timed out
-2026-04-04 16:43:58 | WARNING | uppi | login_and_fetch_visura:311 | [CLIENT 1/1] Navigation to Visure catastali failed for <cf:redacted>
-2026-04-04 16:44:03 | INFO | uppi.domain.object_storage | upload_file:129 | [S3] Uploaded /Users/nitort/projects/uppi/downloads/<cf:redacted>/ATTESTAZIONE_LSHLDY60R46Z138O_b46d2682-b44a-4df1-886c-15f0cc63d48d_F30_N1784_S10_Z2_CATC2_CL1_CONS77m².docx -> attestazioni/attestazioni/<cf:redacted>/b46d2682-b44a-4df1-886c-15f0cc63d48d.docx
-2026-04-04 16:44:07 | INFO | uppi.domain.object_storage | upload_file:129 | [S3] Uploaded /Users/nitort/projects/uppi/downloads/<cf:redacted>/ATTESTAZIONE_LSHLDY60R46Z138O_417f5bd9-6650-4277-99bc-1e8f834a0595_F30_N1784_S7_Z2_CATA3_CL3_CONS4,5 vani.docx -> attestazioni/attestazioni/<cf:redacted>/417f5bd9-6650-4277-99bc-1e8f834a0595.docx
-2026-04-04 16:44:12 | INFO | uppi | _logout_in_context:462 | [LOGOUT] Clicked 'Esci' button (UI)
-2026-04-04 16:44:13 | INFO | uppi | _logout_in_context:514 | [LOGOUT] Context closed
-2026-04-04 16:46:39 | INFO | uppi | start:98 | [START] UppiSpider starting...
-2026-04-04 16:46:39 | INFO | uppi | start:103 | [START] Cleaning old state.json if present
-2026-04-04 16:46:39 | INFO | uppi | start:107 | [START] Old state.json removed
-2026-04-04 16:46:39 | INFO | uppi | start:112 | [START] Cleaning old captcha_images folder if present
-2026-04-04 16:46:39 | INFO | uppi.domain.clients | _parse_yaml:119 | [CLIENTS] Завантажено 1 клієнтів із /Users/nitort/projects/uppi/clients/clients.yml
-2026-04-04 16:46:39 | INFO | uppi | start:127 | [START] Loaded 1 clients from clients.yml
-2026-04-04 16:46:41 | INFO | uppi | start:187 | [START] Will fetch visura from SISTER for <cf:redacted> (force_update=True, reason=force_update_visura)
-2026-04-04 16:46:41 | INFO | uppi | start:199 | [START] 1 clients require SISTER fetch
-2026-04-04 16:46:42 | INFO | uppi | authenticate_user:45 | [LOGIN] Starting AE authentication via Fisconline tab
-2026-04-04 16:46:43 | INFO | uppi | authenticate_user:63 | [LOGIN] 'Accedi' clicked, waiting for profile info marker
-2026-04-04 16:46:45 | INFO | uppi | authenticate_user:68 | [LOGIN] Login successful, PROFILE_INFO found
-2026-04-04 16:46:45 | INFO | uppi | open_sister_service:53 | [OPEN_SISTER] Navigating to AE services home: https://portale.agenziaentrate.gov.it/PortaleWeb/servizi
-2026-04-04 16:46:52 | INFO | uppi | open_sister_service:75 | [OPEN_SISTER] 'I tuoi preferiti' section opened
-2026-04-04 16:46:54 | INFO | uppi | open_sister_service:83 | [OPEN_SISTER] SISTER page opened in a new tab
-2026-04-04 16:47:03 | INFO | uppi | open_sister_service:106 | [OPEN_SISTER] 'Conferma' button clicked on SISTER welcome page
-2026-04-04 16:47:06 | INFO | uppi | open_sister_service:115 | [OPEN_SISTER] storage_state saved to state.json
-2026-04-04 16:47:06 | INFO | uppi | login_and_fetch_visura:284 | [CLIENT 1/1] Processing CF=<cf:redacted>, comune=PESCARA, tipo_catasto=F, ufficio=PESCARA Territorio
-2026-04-04 16:47:06 | INFO | uppi | navigate_to_visure_catastali:146 | [NAVIGATE] Start navigation to Visure catastali for CF=<cf:redacted>, comune=PESCARA, catasto=F, ufficio=PESCARA Territorio
-2026-04-04 16:47:14 | INFO | uppi | navigate_to_visure_catastali:163 | [NAVIGATE] 'Conferma Lettura' accepted
-2026-04-04 16:47:18 | INFO | uppi | navigate_to_visure_catastali:173 | [NAVIGATE] Ufficio selected: PESCARA Territorio
-2026-04-04 16:47:19 | INFO | uppi | navigate_to_visure_catastali:187 | [NAVIGATE] Catasto type selected: F
-2026-04-04 16:47:20 | INFO | uppi | navigate_to_visure_catastali:201 | [NAVIGATE] Comune selected: PESCARA
-2026-04-04 16:47:21 | INFO | uppi | navigate_to_visure_catastali:213 | [NAVIGATE] Search triggered for CF=<cf:redacted>
-2026-04-04 16:47:21 | INFO | uppi | navigate_to_visure_catastali:219 | [NAVIGATE] Omonimi list handled (first option selected)
-2026-04-04 16:47:22 | INFO | uppi | navigate_to_visure_catastali:230 | [NAVIGATE] 'Visura per soggetto' clicked for CF=<cf:redacted>
-2026-04-04 16:47:22 | INFO | uppi | navigate_to_visure_catastali:238 | [NAVIGATE] Navigation completed successfully for CF=<cf:redacted>
-2026-04-04 16:47:22 | INFO | uppi | solve_captcha_if_present:48 | [CAPTCHA] CAPTCHA detected on the page
-2026-04-04 16:47:25 | INFO | uppi | _solve_captcha:<captcha:redacted> | [CAPTCHA] Screenshot captured for solver (bytes=23168)
-2026-04-04 16:47:26 | INFO | uppi | _solve_captcha:<captcha:redacted> | [CAPTCHA] CAPTCHA solved successfully
-2026-04-04 16:47:26 | INFO | uppi | solve_captcha_if_present:89 | [CAPTCHA] CAPTCHA solution filled
-2026-04-04 16:47:26 | INFO | uppi | solve_captcha_if_present:95 | [CAPTCHA] CAPTCHA submitted, 'Inoltra' button disappeared
-2026-04-04 16:47:26 | INFO | uppi | download_document:49 | [DOWNLOAD] Target path for CF=<cf:redacted> → /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf (dir=/Users/nitort/projects/uppi/downloads/<cf:redacted>)
-2026-04-04 16:47:31 | INFO | uppi | download_document:63 | [DOWNLOAD] 'Apri' clicked, waiting for download to start
-2026-04-04 16:47:31 | INFO | uppi | download_document:78 | [DOWNLOAD] File saved: /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf
-2026-04-04 16:47:31 | INFO | uppi | login_and_fetch_visura:361 | [CLIENT 1/1] Downloaded visura for <cf:redacted> -> /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf
-2026-04-04 16:47:33 | INFO | uppi.domain.object_storage | upload_file:129 | [S3] Uploaded /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf -> uppi-bucket/visure/<cf:redacted>.pdf
-2026-04-04 16:47:33 | INFO | uppi.parsers.visura_pdf_parser | parse:56 | [VISURA_PARSER] Парсимо PDF: /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf
-2026-04-04 16:47:34 | INFO | uppi.parsers.visura_pdf_parser | parse:101 | [VISURA_PARSER] Готово: знайдено 2 immobili у /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf
-2026-04-04 16:47:38 | INFO | uppi.domain.object_storage | upload_file:129 | [S3] Uploaded /Users/nitort/projects/uppi/downloads/<cf:redacted>/ATTESTAZIONE_LSHLDY60R46Z138O_b46d2682-b44a-4df1-886c-15f0cc63d48d_F30_N1784_S10_Z2_CATC2_CL1_CONS77m².docx -> attestazioni/attestazioni/<cf:redacted>/b46d2682-b44a-4df1-886c-15f0cc63d48d.docx
-2026-04-04 16:47:41 | INFO | uppi.domain.object_storage | upload_file:129 | [S3] Uploaded /Users/nitort/projects/uppi/downloads/<cf:redacted>/ATTESTAZIONE_LSHLDY60R46Z138O_417f5bd9-6650-4277-99bc-1e8f834a0595_F30_N1784_S7_Z2_CATA3_CL3_CONS4,5 vani.docx -> attestazioni/attestazioni/<cf:redacted>/417f5bd9-6650-4277-99bc-1e8f834a0595.docx
-2026-04-04 16:47:41 | INFO | uppi.utils.audit | safe_unlink:171 | [FS] Deleted local file: /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf
-2026-04-04 16:47:43 | INFO | uppi | _logout_in_context:462 | [LOGOUT] Clicked 'Esci' button (UI)
-2026-04-04 16:47:44 | INFO | uppi | _logout_in_context:514 | [LOGOUT] Context closed
+2026-04-04 18:38:12 | INFO | uppi | start:98 | [START] UppiSpider starting...
+2026-04-04 18:38:12 | INFO | uppi | delete_state_json_if_present:133 | [STATE] state.json deleted (reason=fresh_session_start, path=state.json)
+2026-04-04 18:38:12 | INFO | uppi | start:112 | [START] Cleaning old captcha_images folder if present
+2026-04-04 18:38:12 | INFO | uppi.domain.clients | _parse_yaml:119 | [CLIENTS] Завантажено 1 клієнтів із /Users/nitort/projects/uppi/clients/clients.yml
+2026-04-04 18:38:12 | INFO | uppi | start:128 | [START] Loaded 1 clients from clients.yml
+2026-04-04 18:38:14 | INFO | uppi | start:188 | [START] Will fetch visura from SISTER for <cf:redacted> (force_update=True, reason=force_update_visura)
+2026-04-04 18:38:14 | INFO | uppi | start:200 | [START] 1 clients require SISTER fetch
+2026-04-04 18:38:15 | INFO | uppi | authenticate_user:45 | [LOGIN] Starting AE authentication via Fisconline tab
+2026-04-04 18:38:16 | INFO | uppi | authenticate_user:63 | [LOGIN] 'Accedi' clicked, waiting for profile info marker
+2026-04-04 18:38:18 | INFO | uppi | authenticate_user:68 | [LOGIN] Login successful, PROFILE_INFO found
+2026-04-04 18:38:18 | INFO | uppi | open_sister_service:54 | [OPEN_SISTER] Navigating to AE services home: https://portale.agenziaentrate.gov.it/PortaleWeb/servizi
+2026-04-04 18:38:20 | INFO | uppi | open_sister_service:75 | [OPEN_SISTER] 'I tuoi preferiti' section opened
+2026-04-04 18:38:21 | INFO | uppi | open_sister_service:83 | [OPEN_SISTER] SISTER page opened in a new tab
+2026-04-04 18:38:24 | INFO | uppi | open_sister_service:106 | [OPEN_SISTER] 'Conferma' button clicked on SISTER welcome page
+2026-04-04 18:38:27 | INFO | uppi | save_state_json_snapshot:151 | [STATE] state.json saved (reason=direct_sister_transition, path=state.json)
+2026-04-04 18:38:27 | INFO | uppi | login_and_fetch_visura:285 | [CLIENT 1/1] Processing CF=<cf:redacted>, comune=PESCARA, tipo_catasto=F, ufficio=PESCARA Territorio
+2026-04-04 18:38:27 | INFO | uppi | navigate_to_visure_catastali:149 | [NAVIGATE] Start navigation to Visure catastali for CF=<cf:redacted>, comune=PESCARA, catasto=F, ufficio=PESCARA Territorio
+2026-04-04 18:38:28 | INFO | uppi | navigate_to_visure_catastali:166 | [NAVIGATE] 'Conferma Lettura' accepted
+2026-04-04 18:38:28 | INFO | uppi | navigate_to_visure_catastali:176 | [NAVIGATE] Ufficio selected: PESCARA Territorio
+2026-04-04 18:38:29 | INFO | uppi | navigate_to_visure_catastali:190 | [NAVIGATE] Catasto type selected: F
+2026-04-04 18:38:30 | INFO | uppi | navigate_to_visure_catastali:204 | [NAVIGATE] Comune selected: PESCARA
+2026-04-04 18:38:31 | INFO | uppi | navigate_to_visure_catastali:216 | [NAVIGATE] Search triggered for CF=<cf:redacted>
+2026-04-04 18:38:31 | INFO | uppi | navigate_to_visure_catastali:222 | [NAVIGATE] Omonimi list handled (first option selected)
+2026-04-04 18:38:32 | INFO | uppi | navigate_to_visure_catastali:233 | [NAVIGATE] 'Visura per soggetto' clicked for CF=<cf:redacted>
+2026-04-04 18:38:32 | INFO | uppi | navigate_to_visure_catastali:241 | [NAVIGATE] Navigation completed successfully for CF=<cf:redacted>
+2026-04-04 18:38:32 | INFO | uppi | solve_captcha_if_present:48 | [CAPTCHA] CAPTCHA detected on the page
+2026-04-04 18:38:35 | INFO | uppi | _solve_captcha:<captcha:redacted> | [CAPTCHA] Screenshot captured for solver (bytes=21288)
+2026-04-04 18:38:36 | INFO | uppi | _solve_captcha:<captcha:redacted> | [CAPTCHA] CAPTCHA solved successfully
+2026-04-04 18:38:36 | INFO | uppi | solve_captcha_if_present:89 | [CAPTCHA] CAPTCHA solution filled
+2026-04-04 18:38:37 | INFO | uppi | solve_captcha_if_present:95 | [CAPTCHA] CAPTCHA submitted, 'Inoltra' button disappeared
+2026-04-04 18:38:37 | INFO | uppi | download_document:49 | [DOWNLOAD] Target path for CF=<cf:redacted> → /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf (dir=/Users/nitort/projects/uppi/downloads/<cf:redacted>)
+2026-04-04 18:38:41 | INFO | uppi | download_document:63 | [DOWNLOAD] 'Apri' clicked, waiting for download to start
+2026-04-04 18:38:41 | INFO | uppi | download_document:78 | [DOWNLOAD] File saved: /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf
+2026-04-04 18:38:41 | INFO | uppi | login_and_fetch_visura:362 | [CLIENT 1/1] Downloaded visura for <cf:redacted> -> /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf
+2026-04-04 18:38:43 | INFO | uppi.domain.object_storage | upload_file:129 | [S3] Uploaded /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf -> uppi-bucket/visure/<cf:redacted>.pdf
+2026-04-04 18:38:43 | INFO | uppi.parsers.visura_pdf_parser | parse:57 | [VISURA_PARSER] Парсимо PDF: /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf
+2026-04-04 18:38:45 | INFO | uppi.parsers.visura_pdf_parser | parse:102 | [VISURA_PARSER] Готово: знайдено 2 immobili у /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf
+2026-04-04 18:38:49 | INFO | uppi.domain.object_storage | upload_file:129 | [S3] Uploaded /Users/nitort/projects/uppi/downloads/<cf:redacted>/ATTESTAZIONE_LSHLDY60R46Z138O_b46d2682-b44a-4df1-886c-15f0cc63d48d_F30_N1784_S10_Z2_CATC2_CL1_CONS77m².docx -> attestazioni/attestazioni/<cf:redacted>/b46d2682-b44a-4df1-886c-15f0cc63d48d.docx
+2026-04-04 18:38:53 | INFO | uppi.domain.object_storage | upload_file:129 | [S3] Uploaded /Users/nitort/projects/uppi/downloads/<cf:redacted>/ATTESTAZIONE_LSHLDY60R46Z138O_417f5bd9-6650-4277-99bc-1e8f834a0595_F30_N1784_S7_Z2_CATA3_CL3_CONS4,5 vani.docx -> attestazioni/attestazioni/<cf:redacted>/417f5bd9-6650-4277-99bc-1e8f834a0595.docx
+2026-04-04 18:38:53 | INFO | uppi.utils.audit | safe_unlink:171 | [FS] Deleted local file: /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf
+2026-04-04 18:38:54 | INFO | uppi | _logout_in_context:463 | [LOGOUT] Clicked 'Esci' button (UI)
+2026-04-04 18:38:55 | INFO | uppi | _logout_in_context:515 | [LOGOUT] Context closed
+2026-04-04 19:18:57 | INFO | uppi | start:98 | [START] UppiSpider starting...
+2026-04-04 19:18:57 | INFO | uppi | delete_state_json_if_present:133 | [STATE] state.json deleted (reason=fresh_session_start, path=state.json)
+2026-04-04 19:18:57 | INFO | uppi | start:112 | [START] Cleaning old captcha_images folder if present
+2026-04-04 19:18:57 | INFO | uppi.domain.clients | _parse_yaml:119 | [CLIENTS] Завантажено 1 клієнтів із /Users/nitort/projects/uppi/clients/clients.yml
+2026-04-04 19:18:57 | INFO | uppi | start:128 | [START] Loaded 1 clients from clients.yml
+2026-04-04 19:18:59 | INFO | uppi | start:188 | [START] Will fetch visura from SISTER for <cf:redacted> (force_update=True, reason=force_update_visura)
+2026-04-04 19:18:59 | INFO | uppi | start:200 | [START] 1 clients require SISTER fetch
+2026-04-04 19:19:00 | INFO | uppi | authenticate_user:45 | [LOGIN] Starting AE authentication via Fisconline tab
+2026-04-04 19:19:02 | INFO | uppi | authenticate_user:63 | [LOGIN] 'Accedi' clicked, waiting for profile info marker
+2026-04-04 19:19:04 | INFO | uppi | authenticate_user:68 | [LOGIN] Login successful, PROFILE_INFO found
+2026-04-04 19:19:04 | INFO | uppi | open_sister_service:54 | [OPEN_SISTER] Navigating to AE services home: https://portale.agenziaentrate.gov.it/PortaleWeb/servizi
+2026-04-04 19:19:05 | INFO | uppi | open_sister_service:75 | [OPEN_SISTER] 'I tuoi preferiti' section opened
+2026-04-04 19:19:06 | INFO | uppi | open_sister_service:83 | [OPEN_SISTER] SISTER page opened in a new tab
+2026-04-04 19:19:09 | INFO | uppi | open_sister_service:106 | [OPEN_SISTER] 'Conferma' button clicked on SISTER welcome page
+2026-04-04 19:19:12 | INFO | uppi | save_state_json_snapshot:151 | [STATE] state.json saved (reason=direct_sister_transition, path=state.json)
+2026-04-04 19:19:12 | INFO | uppi | login_and_fetch_visura:285 | [CLIENT 1/1] Processing CF=<cf:redacted>, comune=PESCARA, tipo_catasto=F, ufficio=PESCARA Territorio
+2026-04-04 19:19:12 | INFO | uppi | navigate_to_visure_catastali:149 | [NAVIGATE] Start navigation to Visure catastali for CF=<cf:redacted>, comune=PESCARA, catasto=F, ufficio=PESCARA Territorio
+2026-04-04 19:19:13 | INFO | uppi | navigate_to_visure_catastali:166 | [NAVIGATE] 'Conferma Lettura' accepted
+2026-04-04 19:19:13 | INFO | uppi | navigate_to_visure_catastali:176 | [NAVIGATE] Ufficio selected: PESCARA Territorio
+2026-04-04 19:19:15 | INFO | uppi | navigate_to_visure_catastali:190 | [NAVIGATE] Catasto type selected: F
+2026-04-04 19:19:16 | INFO | uppi | navigate_to_visure_catastali:204 | [NAVIGATE] Comune selected: PESCARA
+2026-04-04 19:19:16 | INFO | uppi | navigate_to_visure_catastali:216 | [NAVIGATE] Search triggered for CF=<cf:redacted>
+2026-04-04 19:19:16 | INFO | uppi | navigate_to_visure_catastali:222 | [NAVIGATE] Omonimi list handled (first option selected)
+2026-04-04 19:19:17 | INFO | uppi | navigate_to_visure_catastali:233 | [NAVIGATE] 'Visura per soggetto' clicked for CF=<cf:redacted>
+2026-04-04 19:19:17 | INFO | uppi | navigate_to_visure_catastali:241 | [NAVIGATE] Navigation completed successfully for CF=<cf:redacted>
+2026-04-04 19:19:17 | INFO | uppi | solve_captcha_if_present:48 | [CAPTCHA] CAPTCHA detected on the page
+2026-04-04 19:19:20 | INFO | uppi | _solve_captcha:<captcha:redacted> | [CAPTCHA] Screenshot captured for solver (bytes=21233)
+2026-04-04 19:19:21 | INFO | uppi | _solve_captcha:<captcha:redacted> | [CAPTCHA] CAPTCHA solved successfully
+2026-04-04 19:19:21 | INFO | uppi | solve_captcha_if_present:89 | [CAPTCHA] CAPTCHA solution filled
+2026-04-04 19:19:22 | INFO | uppi | solve_captcha_if_present:95 | [CAPTCHA] CAPTCHA submitted, 'Inoltra' button disappeared
+2026-04-04 19:19:22 | INFO | uppi | download_document:49 | [DOWNLOAD] Target path for CF=<cf:redacted> → /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf (dir=/Users/nitort/projects/uppi/downloads/<cf:redacted>)
+2026-04-04 19:19:26 | INFO | uppi | download_document:63 | [DOWNLOAD] 'Apri' clicked, waiting for download to start
+2026-04-04 19:19:26 | INFO | uppi | download_document:78 | [DOWNLOAD] File saved: /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf
+2026-04-04 19:19:26 | INFO | uppi | login_and_fetch_visura:362 | [CLIENT 1/1] Downloaded visura for <cf:redacted> -> /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf
+2026-04-04 19:19:28 | INFO | uppi.domain.object_storage | upload_file:137 | [S3] Uploaded /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf -> uppi-bucket/visure/<cf:redacted>.pdf
+2026-04-04 19:19:28 | INFO | uppi.parsers.visura_pdf_parser | parse:57 | [VISURA_PARSER] Парсимо PDF: /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf
+2026-04-04 19:19:30 | INFO | uppi.parsers.visura_pdf_parser | parse:102 | [VISURA_PARSER] Готово: знайдено 2 immobili у /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf
+2026-04-04 19:19:34 | INFO | uppi.domain.object_storage | upload_file:137 | [S3] Uploaded /Users/nitort/projects/uppi/downloads/<cf:redacted>/ATTESTAZIONE_LSHLDY60R46Z138O_b46d2682-b44a-4df1-886c-15f0cc63d48d_F30_N1784_S10_Z2_CATC2_CL1_CONS77m².docx -> attestazioni/attestazioni/<cf:redacted>/b46d2682-b44a-4df1-886c-15f0cc63d48d.docx
+2026-04-04 19:19:37 | INFO | uppi.domain.object_storage | upload_file:137 | [S3] Uploaded /Users/nitort/projects/uppi/downloads/<cf:redacted>/ATTESTAZIONE_LSHLDY60R46Z138O_417f5bd9-6650-4277-99bc-1e8f834a0595_F30_N1784_S7_Z2_CATA3_CL3_CONS4,5 vani.docx -> attestazioni/attestazioni/<cf:redacted>/417f5bd9-6650-4277-99bc-1e8f834a0595.docx
+2026-04-04 19:19:38 | INFO | uppi.utils.audit | safe_unlink:171 | [FS] Deleted local file: /Users/nitort/projects/uppi/downloads/<cf:redacted>/VISURA_LSHLDY60R46Z138O.pdf
+2026-04-04 19:19:39 | INFO | uppi | _logout_in_context:463 | [LOGOUT] Clicked 'Esci' button (UI)
+2026-04-04 19:19:40 | INFO | uppi | _logout_in_context:515 | [LOGOUT] Context closed

@@ -13,12 +13,12 @@ Protected invariants:
   safer logging / wrapper without semantic change.
 """
 
-import os
 from typing import Any
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from uppi.ae.uppi_selectors import UppiSelectors
+from uppi.config.workspace import delete_state_json_if_present
 
 
 async def authenticate_user(
@@ -70,12 +70,13 @@ async def authenticate_user(
         except PlaywrightTimeoutError as err:
             logger.error("[LOGIN] Profile info not found after login: %s", err)
             # Якщо стейт існує — видалимо, бо він некоректний
-            if os.path.exists("state.json"):
-                try:
-                    os.remove("state.json")
-                    logger.info("[LOGIN] Removed leftover state.json after failed login")
-                except Exception as rm_err:
-                    logger.warning("[LOGIN] Failed to remove leftover state.json: %s", rm_err)
+            try:
+                delete_state_json_if_present(
+                    logger=logger,
+                    reason="failed_login_invalidation",
+                )
+            except Exception as rm_err:
+                logger.warning("[LOGIN] Failed to remove leftover state.json: %s", rm_err)
             return False
 
     except PlaywrightTimeoutError as err:

@@ -2,7 +2,7 @@
 
 Цей документ є canonical live smoke checklist для AE / SISTER.
 Protected invariants, які не можна переосмислювати під час smoke-перевірок,
-описані в [docs/refactor_protected_invariants.md](/Users/nitort/projects/uppi/docs/refactor_protected_invariants.md).
+описані в [./refactor_protected_invariants.md](./refactor_protected_invariants.md).
 
 ## Призначення
 
@@ -13,7 +13,7 @@ Protected invariants, які не можна переосмислювати пі
 
 ## Коли live smoke обов'язковий
 
-- Після великих змін у [uppi/spiders/uppi_spider.py](/Users/nitort/projects/uppi/uppi/spiders/uppi_spider.py).
+- Після великих змін у [uppi/spiders/uppi_spider.py](../uppi/spiders/uppi_spider.py).
 - Після змін у `uppi/ae/*`.
 - Після змін у browser-adjacent logging calls або cleanup навколо AE / SISTER flow.
 - Перед merge великого PR, який чіпає AE auth, direct SISTER entry, CAPTCHA,
@@ -123,8 +123,8 @@ Protected invariants, які не можна переосмислювати пі
 
 ## Evidence / Sign-Off Template
 
-Для реального Sprint 2 merge sign-off використовувати окремий шаблон:
-[docs/live_smoke_signoff_template_ae_sister.md](/Users/nitort/projects/uppi/docs/live_smoke_signoff_template_ae_sister.md).
+Для реального manual sign-off використовувати окремий шаблон:
+[./live_smoke_signoff_template_ae_sister.md](./live_smoke_signoff_template_ae_sister.md).
 
 ```text
 Дата:
@@ -142,7 +142,8 @@ Owner:
 
 ## Пов'язані документи
 
-- Canonical invariants: [docs/refactor_protected_invariants.md](/Users/nitort/projects/uppi/docs/refactor_protected_invariants.md)
-- Sprint 1 execution-plan context: [docs/refactor_execution_plan_sprint_1.md](/Users/nitort/projects/uppi/docs/refactor_execution_plan_sprint_1.md)
-- Sprint 2 merge gate: [docs/sprint_2_merge_readiness_checklist.md](/Users/nitort/projects/uppi/docs/sprint_2_merge_readiness_checklist.md)
-- Smoke sign-off template: [docs/live_smoke_signoff_template_ae_sister.md](/Users/nitort/projects/uppi/docs/live_smoke_signoff_template_ae_sister.md)
+- Canonical invariants: [./refactor_protected_invariants.md](./refactor_protected_invariants.md)
+- `state.json` lifecycle ownership note: [./state_json_lifecycle_contract.md](./state_json_lifecycle_contract.md)
+- Current runtime flow: [./runtime_flow.md](./runtime_flow.md)
+- Current architecture guide: [./current_architecture.md](./current_architecture.md)
+- Smoke sign-off template: [./live_smoke_signoff_template_ae_sister.md](./live_smoke_signoff_template_ae_sister.md)

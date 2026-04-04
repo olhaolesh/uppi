@@ -1,4 +1,4 @@
-"""Централізовані dataclass-конфіги для low-risk bootstrap і DI foundation."""
+"""Централізовані dataclass-конфіги для low-risk bootstrap і provider-ready seams."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ class DatabaseConfig:
 
     @classmethod
     def from_env(cls) -> "DatabaseConfig":
-        """Читає DB-конфіг з env, зберігаючи поточні дефолти проєкту."""
+        """Читає DB-конфіг з env, зберігаючи current defaults і provider-neutral shape."""
         return cls(
             host=config("DB_HOST", default="localhost"),
             port=int(config("DB_PORT", default="5432")),
@@ -152,7 +152,13 @@ class AppConfig:
 
     @classmethod
     def from_env(cls, *, repo_root: Path | None = None) -> "AppConfig":
-        """Будує повний конфіг застосунку з поточних env і canonical paths."""
+        """Будує повний конфіг застосунку з поточних env і canonical paths.
+
+        На цьому етапі джерелом лишаються env/defaults, але caller-ів уже
+        відокремлено від конкретного config-provider механізму через dataclass
+        surface. Це готує шлях до future SSM/Secrets Manager-backed provider-а
+        без зміни runtime semantics цього PR.
+        """
         resolved_root = repo_root or project_root()
         return cls(
             database=DatabaseConfig.from_env(),

@@ -1,5 +1,11 @@
 # Refactor Risk Register
 
+> Historical / archival planning artifact.
+> Цей risk register описує refactor-phase risks і не замінює current operational docs.
+> Для актуальних обмежень дивіться [README.md](../README.md),
+> [Protected invariants](./refactor_protected_invariants.md) і
+> [Transaction / resource safety review](./transaction_resource_safety_review.md).
+
 ## R1 — Browser Flow Regression
 
 - Severity: Critical

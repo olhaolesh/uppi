@@ -7,6 +7,8 @@ from pathlib import Path
 from docx import Document
 from itemadapter import ItemAdapter
 
+import uppi.docs.attestazione_template_filler as legacy_template_filler
+import uppi.services.attestazione_template_filler as canonical_template_filler
 from uppi.docs.attestazione_template_filler import (
     fill_attestazione_template,
     fill_underscored,
@@ -177,6 +179,13 @@ def test_attestazione_generator_happy_path_populates_current_core_params():
     assert params["{{C_CNT}}"] == "0"
     assert params["{{D_CNT}}"] == "1"
     assert params["{{CAN_MENSILE}}"] == "650.00"
+
+
+def test_attestazione_template_filler_compatibility_shim_keeps_old_and_new_import_paths_working():
+    """Перевіряє, що migration shim не ламає старий import path."""
+    assert legacy_template_filler.fill_attestazione_template is canonical_template_filler.fill_attestazione_template
+    assert legacy_template_filler.fill_underscored is canonical_template_filler.fill_underscored
+    assert legacy_template_filler.underscored is canonical_template_filler.underscored
 
 
 def test_attestazione_generator_known_current_behavior_yaml_fields_override_db_contract_and_conduttore_state():

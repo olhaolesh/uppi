@@ -24,7 +24,7 @@ Protected invariant для `state.json`, проти якого мають пер
 - зміна browser flow через settings-driven "optimization".
 """
 
-import os
+from uppi.config.workspace import bind_existing_state_json_storage_state
 
 BOT_NAME = "uppi"
 
@@ -75,8 +75,7 @@ PLAYWRIGHT_CONTEXTS = {
 # Protected invariant: тут лише підхоплюється вже створений session state.
 # Цю точку не можна перетворювати на механізм повторного використання старого
 # стейту або змінювати create/load/delete semantics навколо `state.json`.
-if os.path.exists("state.json"):
-    PLAYWRIGHT_CONTEXTS["default"]["storage_state"] = "state.json"
+bind_existing_state_json_storage_state(PLAYWRIGHT_CONTEXTS)
 
 
 DOWNLOAD_HANDLERS = {

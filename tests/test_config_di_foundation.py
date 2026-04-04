@@ -80,6 +80,7 @@ def test_get_pg_connection_accepts_explicit_database_config_and_connect_factory(
     calls = {}
 
     def fake_connect(**kwargs):
+        """Фіксує kwargs до connect factory без реального підключення."""
         calls["kwargs"] = kwargs
         return _FakeConnection()
 

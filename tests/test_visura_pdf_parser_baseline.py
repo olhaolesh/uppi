@@ -69,11 +69,13 @@ def _patch_parser_io(monkeypatch, fixture_data: dict, *, camelot_error_pages: se
     camelot_error_pages = camelot_error_pages or set()
 
     def fake_open(_pdf_path):
+        """Повертає контрольований PDF double або кидає задану open-помилку."""
         if open_exception is not None:
             raise open_exception
         return _FakeDoc(fixture_data.get("pages", []))
 
     def fake_read_pdf(_pdf_path, *, pages: str, flavor: str):
+        """Повертає контрольовані таблиці або page-level Camelot failure."""
         assert flavor == "lattice"
         if pages in camelot_error_pages:
             raise RuntimeError(f"camelot error on page {pages}")

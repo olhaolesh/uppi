@@ -21,6 +21,7 @@ class DomainError(Exception):
         details: dict[str, Any] | None = None,
         issues: Sequence[ValidationIssue] | None = None,
     ) -> None:
+        """Зберігає повідомлення, structured details і validation-issues для подальшого аналізу."""
         super().__init__(message)
         self.message = message
         self.details = details or {}

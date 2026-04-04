@@ -36,7 +36,6 @@ Protected invariants для цього модуля:
 - wrapper/API encapsulation без зміни порядку дій і semantics.
 """
 
-import os
 import shutil
 from typing import Any, Dict, List, Optional
 
@@ -50,6 +49,7 @@ from uppi.ae.download import download_document
 from uppi.ae.sister_navigation import open_sister_service, navigate_to_visure_catastali
 from uppi.ae.uppi_selectors import UppiSelectors
 from uppi.config import AppConfig
+from uppi.config.workspace import delete_state_json_if_present, get_captcha_images_dir
 from uppi.domain.clients import load_clients
 from uppi.domain.db import get_pg_connection
 from uppi.items import UppiItem
@@ -100,19 +100,20 @@ class UppiSpider(scrapy.Spider):
         # Protected invariant: кожна нова сесія має стартувати без reuse
         # застарілого `state.json`. Цей cleanup не можна перетворювати на
         # зміну lifecycle semantics або на дозвіл зберігати persistent state.
-        self.logger.info("[START] Cleaning old state.json if present")
         try:
-            if os.path.exists("state.json"):
-                os.remove("state.json")
-                self.logger.info("[START] Old state.json removed")
+            delete_state_json_if_present(
+                logger=self.logger,
+                reason="fresh_session_start",
+            )
         except Exception as e:
-            self.logger.warning("[START] Failed to remove state.json: %s", e)
+            self.logger.warning("[STATE] Failed to remove state.json at fresh session start: %s", e)
 
         # Чистимо папку captcha_images
         self.logger.info("[START] Cleaning old captcha_images folder if present")
         try:
-            if os.path.exists("captcha_images"):
-                shutil.rmtree("captcha_images")
+            captcha_images_dir = get_captcha_images_dir()
+            if captcha_images_dir.exists():
+                shutil.rmtree(captcha_images_dir)
                 self.logger.info("[START] Old captcha_images folder removed")
         except Exception as e:
             self.logger.warning("[START] Failed to remove captcha_images folder: %s", e)

@@ -34,7 +34,11 @@ class ObjectStorageConfig:
 
 
 def load_storage_config() -> ObjectStorageConfig:
-    """Зчитує конфіг storage з env-параметрів поточного оточення."""
+    """Зчитує storage-конфіг з env у provider-neutral dataclass shape.
+
+    Current runtime лишається env-backed. Future AWS/provider integration має
+    гідрувати той самий `ObjectStorageConfig`, а не змінювати storage API.
+    """
     return ObjectStorageConfig(
         endpoint=config("S3_ENDPOINT", default="localhost:9000"),
         access_key=config("S3_ACCESS_KEY", default="minioadmin"),
@@ -57,7 +61,11 @@ def create_object_storage(
 
 class ObjectStorage:
     """
-    Тонка обгортка над MinIO client.
+    Тонка обгортка над MinIO/S3 client.
+
+    Boundary тут already відділяє caller-ів від конкретного backend-а
+    (MinIO/R2/S3-compatible). Цей PR не додає AWS implementation, лише фіксує,
+    що future provider/readiness work має лишатися в межах config/client seams.
     """
     def __init__(
         self,
