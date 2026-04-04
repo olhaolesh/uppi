@@ -1,14 +1,16 @@
-"""Тонкі runtime-хелпери для підключення до PostgreSQL і простих DB-checks."""
+"""Тонкі runtime-хелпери для PostgreSQL з additive seam для DI foundation."""
 
-# uppi/domain/db.py
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
 import psycopg2
 from decouple import config
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, before_sleep_log
 from psycopg2 import OperationalError, InterfaceError
+
+from uppi.config.app_config import DatabaseConfig
 
 
 logger = logging.getLogger(__name__)
@@ -21,6 +23,23 @@ DB_PASSWORD = config("DB_PASSWORD", default="uppi_password")
 DB_SSL_MODE = config("DB_SSL_MODE", default="prefer")
 
 
+def get_default_database_config() -> DatabaseConfig:
+    """Повертає canonical DB-конфіг, сумісний з поточними module defaults."""
+    return DatabaseConfig(
+        host=DB_HOST,
+        port=int(DB_PORT),
+        name=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        ssl_mode=DB_SSL_MODE,
+    )
+
+
+def build_pg_connection_kwargs(db_config: DatabaseConfig | None = None) -> dict[str, object]:
+    """Формує kwargs для psycopg2.connect з explicit або canonical DB-конфігу."""
+    return (db_config or get_default_database_config()).connect_kwargs()
+
+
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=20),
@@ -28,9 +47,13 @@ DB_SSL_MODE = config("DB_SSL_MODE", default="prefer")
     before_sleep=before_sleep_log(logger, logging.WARNING),
     reraise=True,
 )
-def get_pg_connection():
+def get_pg_connection(
+    db_config: DatabaseConfig | None = None,
+    *,
+    connect_factory: Callable[..., psycopg2.extensions.connection] | None = None,
+):
     """
-    Отримати новий конекшн до PostgreSQL (psycopg2).
+    Повертає новий psycopg2 connection з поточними default semantics.
 
     Важливо:
     - autocommit = False (транзакції керуються явно)
@@ -39,15 +62,9 @@ def get_pg_connection():
     - тільки transient network / channel errors
     - тільки на connect()
     """
+    resolved_connect_factory = connect_factory or psycopg2.connect
     try:
-        conn = psycopg2.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            sslmode=DB_SSL_MODE,
-        )
+        conn = resolved_connect_factory(**build_pg_connection_kwargs(db_config))
         conn.autocommit = False
         return conn
     except psycopg2.Error as e:

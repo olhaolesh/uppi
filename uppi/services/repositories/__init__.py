@@ -1,12 +1,10 @@
-"""Facade-модуль для сумісного доступу до repository-функцій.
+"""Тонкі repository-модулі для роботи з поточним SQL-контрактом проєкту.
 
-Початковий монолітний `db_repo.py` розбитий на thin repo submodules у
-`uppi.services.repositories.*`. Цей файл навмисно зберігає стару публічну
-поверхню імпортів, щоб перший structural split лишився rollback-friendly і
-не вимагав масового перепідключення call sites в одному PR.
+Пакет групує функції з колишнього монолітного `db_repo.py` за зонами
+відповідальності, але не змінює їхню фактичну поведінку. Публічна
+сумісність назовні поки що зберігається через facade-модуль
+`uppi.services.db_repo`.
 """
-
-from __future__ import annotations
 
 from uppi.services.repositories.address_repo import db_upsert_address
 from uppi.services.repositories.audit_repo import (

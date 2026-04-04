@@ -123,6 +123,9 @@ Protected invariants, які не можна переосмислювати пі
 
 ## Evidence / Sign-Off Template
 
+Для реального Sprint 2 merge sign-off використовувати окремий шаблон:
+[docs/live_smoke_signoff_template_ae_sister.md](/Users/nitort/projects/uppi/docs/live_smoke_signoff_template_ae_sister.md).
+
 ```text
 Дата:
 Branch / commit:
@@ -141,3 +144,5 @@ Owner:
 
 - Canonical invariants: [docs/refactor_protected_invariants.md](/Users/nitort/projects/uppi/docs/refactor_protected_invariants.md)
 - Sprint 1 execution-plan context: [docs/refactor_execution_plan_sprint_1.md](/Users/nitort/projects/uppi/docs/refactor_execution_plan_sprint_1.md)
+- Sprint 2 merge gate: [docs/sprint_2_merge_readiness_checklist.md](/Users/nitort/projects/uppi/docs/sprint_2_merge_readiness_checklist.md)
+- Smoke sign-off template: [docs/live_smoke_signoff_template_ae_sister.md](/Users/nitort/projects/uppi/docs/live_smoke_signoff_template_ae_sister.md)

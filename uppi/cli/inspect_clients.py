@@ -10,7 +10,7 @@ from decouple import config
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from uppi.domain.clients import CLIENTS_FILE, load_clients
+from uppi.domain.clients import default_clients_source_config, load_clients
 
 
 # =========================================================
@@ -296,7 +296,7 @@ def main():
         # CF не передали → беремо з clients.yml
         rows = load_clients()
         if not rows:
-            print(f"❌ clients.yml порожній або не знайдений ({CLIENTS_FILE})")
+            print(f"❌ clients.yml порожній або не знайдений ({default_clients_source_config().clients_file})")
             return
 
         for row in rows:

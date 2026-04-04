@@ -17,14 +17,15 @@ def test_default_clients_file_constant_points_to_repo_clients_yml():
     assert domain_clients.CLIENTS_FILE == expected
 
 
-def test_known_current_behavior_uppi_clients_yaml_env_override_is_ignored(monkeypatch):
+def test_uppi_clients_yaml_env_override_takes_precedence_in_default_clients_source_config(monkeypatch, tmp_path):
     """Перевіряє сценарій, описаний у назві тесту."""
-    original_file = domain_clients.CLIENTS_FILE
-
-    monkeypatch.setenv("UPPI_CLIENTS_YAML", "/tmp/override-clients.yml")
+    override_path = tmp_path / "override-clients.yml"
+    monkeypatch.setenv("UPPI_CLIENTS_YAML", str(override_path))
     reloaded = importlib.reload(domain_clients)
     try:
-        assert reloaded.CLIENTS_FILE == original_file
+        source_config = reloaded.default_clients_source_config()
+        assert source_config.clients_file == override_path
+        assert source_config.clients_dir == override_path.parent
     finally:
         monkeypatch.delenv("UPPI_CLIENTS_YAML", raising=False)
         importlib.reload(reloaded)
@@ -35,6 +36,7 @@ def test_load_clients_reads_from_module_clients_file_constant_when_patched(monke
     yaml_path = tmp_path / "clients.yml"
     yaml_path.write_text("- LOCATORE_CF: ABCDEF12G34H567I\n", encoding="utf-8")
 
+    monkeypatch.setenv("UPPI_CLIENTS_YAML", "")
     monkeypatch.setattr(domain_clients, "CLIENTS_FILE", yaml_path)
 
     rows = domain_clients.load_clients()
@@ -42,6 +44,24 @@ def test_load_clients_reads_from_module_clients_file_constant_when_patched(monke
     assert len(rows) == 1
     assert rows[0]["LOCATORE_CF"] == "ABCDEF12G34H567I"
     assert rows[0]["locatore_cf"] == "ABCDEF12G34H567I"
+
+
+def test_load_clients_explicit_path_takes_precedence_over_env_override(monkeypatch, tmp_path):
+    """Перевіряє сценарій, описаний у назві тесту."""
+    env_yaml = tmp_path / "env-clients.yml"
+    explicit_yaml = tmp_path / "explicit-clients.yml"
+    env_yaml.write_text("- LOCATORE_CF: ENVOVR12G34H567I\n", encoding="utf-8")
+    explicit_yaml.write_text("- LOCATORE_CF: EXPLCT12G34H567I\n", encoding="utf-8")
+
+    monkeypatch.setenv("UPPI_CLIENTS_YAML", str(env_yaml))
+    reloaded = importlib.reload(domain_clients)
+    try:
+        rows = reloaded.load_clients(path=explicit_yaml)
+        assert len(rows) == 1
+        assert rows[0]["LOCATORE_CF"] == "EXPLCT12G34H567I"
+    finally:
+        monkeypatch.delenv("UPPI_CLIENTS_YAML", raising=False)
+        importlib.reload(reloaded)
 
 
 def test_parse_yaml_returns_empty_list_for_missing_file(tmp_path):

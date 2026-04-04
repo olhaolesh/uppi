@@ -1,12 +1,11 @@
-"""Адаптер до S3-compatible storage та canonical naming rules для артефактів."""
+"""Адаптер до S3-compatible storage з additive factory seams для DI foundation."""
 
-# uppi/domain/object_storage.py
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from decouple import config
 from minio import Minio
@@ -46,20 +45,37 @@ def load_storage_config() -> ObjectStorageConfig:
     )
 
 
+def create_object_storage(
+    cfg: Optional[ObjectStorageConfig] = None,
+    *,
+    config_loader: Callable[[], ObjectStorageConfig] = load_storage_config,
+    client_factory: Callable[..., Minio] = Minio,
+) -> "ObjectStorage":
+    """Створює storage-адаптер через explicit factory з current-compatible defaults."""
+    return ObjectStorage(cfg=cfg, config_loader=config_loader, client_factory=client_factory)
+
+
 class ObjectStorage:
     """
     Тонка обгортка над MinIO client.
     """
-    def __init__(self, cfg: Optional[ObjectStorageConfig] = None):
-        """Створює storage-адаптер з переданим або стандартним конфігом."""
-        self.cfg = cfg or load_storage_config()
+    def __init__(
+        self,
+        cfg: Optional[ObjectStorageConfig] = None,
+        *,
+        config_loader: Callable[[], ObjectStorageConfig] = load_storage_config,
+        client_factory: Callable[..., Minio] = Minio,
+    ):
+        """Створює storage-адаптер з явним або canonical env-backed конфігом."""
+        self.cfg = cfg or config_loader()
+        self._client_factory = client_factory
         self._client: Optional[Minio] = None
 
     @property
     def client(self) -> Minio:
         """Ліниво створює й кешує клієнт MinIO/S3."""
         if self._client is None:
-            self._client = Minio(
+            self._client = self._client_factory(
                 self.cfg.endpoint,
                 access_key=self.cfg.access_key,
                 secret_key=self.cfg.secret_key,
