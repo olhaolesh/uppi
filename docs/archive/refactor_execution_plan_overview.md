@@ -2,9 +2,9 @@
 
 > Historical / archival planning artifact.
 > Цей файл корисний для історії рефакторингу, але не є current operational guide.
-> Для актуального стану проєкту починайте з [README.md](../README.md),
-> [Поточної архітектури](./current_architecture.md) і
-> [Основного runtime flow](./runtime_flow.md).
+> Для актуального стану проєкту починайте з [README.md](../../README.md),
+> [Поточної архітектури](../current_architecture.md) і
+> [Основного runtime flow](../runtime_flow.md).
 
 ## Executive Summary
 

@@ -2,9 +2,9 @@
 
 > Historical / archival merge artifact.
 > Це закритий merge gate для Sprint 2, а не current engineering handbook.
-> Для поточної навігації по проєкту використовуйте [README.md](../README.md),
-> [Поточну архітектуру](./current_architecture.md) і
-> [Live smoke checklist](./live_smoke_strategy_ae_sister.md).
+> Для поточної навігації по проєкту використовуйте [README.md](../../README.md),
+> [Поточну архітектуру](../current_architecture.md) і
+> [Live smoke checklist](../live_smoke_strategy_ae_sister.md).
 
 Цей документ є practical merge gate для Sprint 2 closeout.
 Він не підтверджує merge автоматично: manual live smoke sign-off лишається
@@ -13,30 +13,30 @@
 Пов'язані документи:
 
 - Sprint 2 architecture snapshot: [./sprint_2_architecture_state.md](./sprint_2_architecture_state.md)
-- canonical live smoke checklist: [./live_smoke_strategy_ae_sister.md](./live_smoke_strategy_ae_sister.md)
-- live smoke sign-off template: [./live_smoke_signoff_template_ae_sister.md](./live_smoke_signoff_template_ae_sister.md)
-- protected invariants: [./refactor_protected_invariants.md](./refactor_protected_invariants.md)
+- canonical live smoke checklist: [../live_smoke_strategy_ae_sister.md](../live_smoke_strategy_ae_sister.md)
+- live smoke sign-off template: [../live_smoke_signoff_template_ae_sister.md](../live_smoke_signoff_template_ae_sister.md)
+- protected invariants: [../refactor_protected_invariants.md](../refactor_protected_invariants.md)
 
 ## 1. Automated Gates
 
 Перед merge мають бути green:
 
 - `venv/bin/python -m pytest -q`
-- [tests/test_pipeline_golden_path_integration.py](../tests/test_pipeline_golden_path_integration.py)
-- [tests/test_db_repo_postgres_integration.py](../tests/test_db_repo_postgres_integration.py)
-- [tests/test_db_repo_patch_characterization.py](../tests/test_db_repo_patch_characterization.py)
-- [tests/test_visura_pdf_parser_baseline.py](../tests/test_visura_pdf_parser_baseline.py)
-- [tests/test_attestazione_generator_baseline.py](../tests/test_attestazione_generator_baseline.py)
-- [tests/test_validation_layer.py](../tests/test_validation_layer.py)
-- [tests/test_domain_exceptions.py](../tests/test_domain_exceptions.py)
-- [tests/test_visura_stage_services.py](../tests/test_visura_stage_services.py)
+- [tests/test_pipeline_golden_path_integration.py](../../tests/test_pipeline_golden_path_integration.py)
+- [tests/test_db_repo_postgres_integration.py](../../tests/test_db_repo_postgres_integration.py)
+- [tests/test_db_repo_patch_characterization.py](../../tests/test_db_repo_patch_characterization.py)
+- [tests/test_visura_pdf_parser_baseline.py](../../tests/test_visura_pdf_parser_baseline.py)
+- [tests/test_attestazione_generator_baseline.py](../../tests/test_attestazione_generator_baseline.py)
+- [tests/test_validation_layer.py](../../tests/test_validation_layer.py)
+- [tests/test_domain_exceptions.py](../../tests/test_domain_exceptions.py)
+- [tests/test_visura_stage_services.py](../../tests/test_visura_stage_services.py)
 
 ## 2. Structure Review
 
 Перед merge треба підтвердити:
 
 - repo layer живе в `uppi/services/repositories/*`
-- compatibility facade у [uppi/services/db_repo.py](../uppi/services/db_repo.py) лишається валідним
+- compatibility facade у [uppi/services/db_repo.py](../../uppi/services/db_repo.py) лишається валідним
 - patch semantics винесені у `uppi/services/policies/*`
 - validation layer живе окремо від repo SQL logic
 - typed domain exceptions живуть окремо від browser flow
@@ -59,8 +59,8 @@ Manual live smoke sign-off є required before merge.
 
 Що треба використати:
 
-- checklist: [docs/live_smoke_strategy_ae_sister.md](./live_smoke_strategy_ae_sister.md)
-- sign-off artifact: [docs/live_smoke_signoff_template_ae_sister.md](./live_smoke_signoff_template_ae_sister.md)
+- checklist: [docs/live_smoke_strategy_ae_sister.md](../live_smoke_strategy_ae_sister.md)
+- sign-off artifact: [docs/live_smoke_signoff_template_ae_sister.md](../live_smoke_signoff_template_ae_sister.md)
 
 Коли Sprint 2 merge blocked:
 

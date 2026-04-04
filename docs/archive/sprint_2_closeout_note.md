@@ -2,9 +2,9 @@
 
 > Historical / archival closeout artifact.
 > Документ фіксує стан наприкінці Sprint 2, але не є current operational guide.
-> Для поточного стану коду дивіться [README.md](../README.md),
-> [Поточну архітектуру](./current_architecture.md) і
-> [Основний runtime flow](./runtime_flow.md).
+> Для поточного стану коду дивіться [README.md](../../README.md),
+> [Поточну архітектуру](../current_architecture.md) і
+> [Основний runtime flow](../runtime_flow.md).
 
 Це коротка closeout note для Sprint 2 перед merge.
 
@@ -35,9 +35,9 @@ Sprint 2 не вважати закритим до завершення manual l
 
 Використати:
 
-- checklist: [docs/live_smoke_strategy_ae_sister.md](./live_smoke_strategy_ae_sister.md)
-- sign-off template: [docs/live_smoke_signoff_template_ae_sister.md](./live_smoke_signoff_template_ae_sister.md)
-- merge gate: [docs/sprint_2_merge_readiness_checklist.md](./sprint_2_merge_readiness_checklist.md)
+- checklist: [../live_smoke_strategy_ae_sister.md](../live_smoke_strategy_ae_sister.md)
+- sign-off template: [../live_smoke_signoff_template_ae_sister.md](../live_smoke_signoff_template_ae_sister.md)
+- merge gate: [./sprint_2_merge_readiness_checklist.md](./sprint_2_merge_readiness_checklist.md)
 
 ## Що лишається на Sprint 3
 

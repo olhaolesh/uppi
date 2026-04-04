@@ -2,9 +2,9 @@
 
 > Historical / archival planning artifact.
 > Sprint 2 already implemented; цей файл не є current runbook.
-> Для поточного коду читайте [README.md](../README.md),
-> [Поточну архітектуру](./current_architecture.md) і
-> [Основний runtime flow](./runtime_flow.md).
+> Для поточного коду читайте [README.md](../../README.md),
+> [Поточну архітектуру](../current_architecture.md) і
+> [Основний runtime flow](../runtime_flow.md).
 
 ## Sprint Goal
 

@@ -2,9 +2,9 @@
 
 > Historical / archival planning artifact.
 > Sprint 1 already implemented; цей файл потрібен лише як історія rollout-плану.
-> Для актуального стану системи дивіться [README.md](../README.md),
-> [Поточну архітектуру](./current_architecture.md) і
-> [Protected invariants](./refactor_protected_invariants.md).
+> Для актуального стану системи дивіться [README.md](../../README.md),
+> [Поточну архітектуру](../current_architecture.md) і
+> [Protected invariants](../refactor_protected_invariants.md).
 
 ## Sprint Goal
 

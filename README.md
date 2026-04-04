@@ -134,12 +134,14 @@ Recommended reading order:
 
 Ці файли корисні для історії рефакторингу, але не є головними current guides:
 
-- `docs/refactor_execution_plan_*`
-- `docs/refactor_execution_plan_overview.md`
-- `docs/refactor_risk_register.md`
-- `docs/sprint_2_architecture_state.md`
-- `docs/sprint_2_merge_readiness_checklist.md`
-- `docs/sprint_2_closeout_note.md`
+- [Архів execution plans](docs/archive/refactor_execution_plan_overview.md)
+- [Sprint 1 planning artifact](docs/archive/refactor_execution_plan_sprint_1.md)
+- [Sprint 2 planning artifact](docs/archive/refactor_execution_plan_sprint_2.md)
+- [Sprint 3 planning artifact](docs/archive/refactor_execution_plan_sprint_3.md)
+- [Refactor risk register](docs/archive/refactor_risk_register.md)
+- [Sprint 2 architecture snapshot](docs/archive/sprint_2_architecture_state.md)
+- [Sprint 2 merge-readiness checklist](docs/archive/sprint_2_merge_readiness_checklist.md)
+- [Sprint 2 closeout note](docs/archive/sprint_2_closeout_note.md)
 
 ## Локальний запуск
 
