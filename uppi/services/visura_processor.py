@@ -178,8 +178,16 @@ class VisuraProcessor:
             failure_recorder=self.failure_registry_recorder,
         )
 
+    def process_import_item(self, item, spider):
+        """Run the import-only boundary and stop after `ImmobileSync`."""
+        return self._process_pipeline_item(item, spider, include_generation=False)
+
     def process_item(self, item, spider):
         """Повністю обробляє один item після етапу browser download."""
+        return self._process_pipeline_item(item, spider, include_generation=True)
+
+    def _process_pipeline_item(self, item, spider, *, include_generation: bool):
+        """Shared pipeline entry point with an explicit import/generation split."""
         adapter = ItemAdapter(item)
         run_id = self.failure_registry_recorder.resolve_run_id(adapter=adapter, spider=spider)
         locatore_cf = clean_str(adapter.get("locatore_cf") or adapter.get("codice_fiscale"))
@@ -192,67 +200,22 @@ class VisuraProcessor:
         conn = self.connection_factory()
 
         try:
-            person_sync = self.person_sync_service.sync(
+            visura_ingest = self._run_import_phase(
                 conn,
+                spider,
                 adapter,
                 run_id=run_id,
                 locatore_cf=locatore_cf,
                 cond_cf=cond_cf,
             )
 
-            visura_ingest = self.visura_ingest_service.ingest(
-                conn,
-                adapter,
-                run_id=run_id,
-                locatore_cf=locatore_cf,
-            )
-
-            self.immobile_sync_service.sync(
-                conn,
-                spider,
-                adapter,
-                run_id=run_id,
-                locatore_cf=locatore_cf,
-                loc_addr_id=person_sync.loc_addr_id,
-                visura_ingest=visura_ingest,
-            )
-
-            # --- ЕТАП 4: ОПЕРАЦІЙНИЙ ЦИКЛ (КОНТРАКТИ ТА ГЕНЕРАЦІЯ) ---
-
-            immobili_db = db_load_immobili(conn, locatore_cf)
-            selected = filter_immobiles_by_yaml(immobili_db, adapter)
-
-            for immobile_id, imm in selected:
-                contract_sync = self.contract_sync_service.sync(
-                    conn,
-                    adapter,
-                    run_id=run_id,
-                    client_cf=locatore_cf,
-                    immobile_id=immobile_id,
-                )
-
-                canone_stage = self.canone_stage_service.run(
+            if include_generation:
+                self._run_generation_phase(
                     conn,
                     spider,
                     adapter,
                     run_id=run_id,
                     locatore_cf=locatore_cf,
-                    imm=imm,
-                    contract_id=contract_sync.contract_id,
-                    contract_ctx=contract_sync.contract_ctx,
-                )
-
-                self.document_stage_service.run(
-                    conn,
-                    spider,
-                    adapter,
-                    run_id=run_id,
-                    imm=imm,
-                    contract_ctx=canone_stage.contract_ctx,
-                    contract_id=contract_sync.contract_id,
-                    immobile_id=immobile_id,
-                    locatore_cf=locatore_cf,
-                    canone_result_snapshot=canone_stage.canone_result_snapshot,
                 )
 
             conn.commit()
@@ -278,3 +241,69 @@ class VisuraProcessor:
         finally:
             if conn:
                 conn.close()
+
+    def _run_import_phase(self, conn, spider, adapter, *, run_id: str, locatore_cf: str, cond_cf: str):
+        """Import-only boundary: sync visura data and stop after `ImmobileSync`."""
+        person_sync = self.person_sync_service.sync(
+            conn,
+            adapter,
+            run_id=run_id,
+            locatore_cf=locatore_cf,
+            cond_cf=cond_cf,
+        )
+
+        visura_ingest = self.visura_ingest_service.ingest(
+            conn,
+            adapter,
+            run_id=run_id,
+            locatore_cf=locatore_cf,
+        )
+
+        self.immobile_sync_service.sync(
+            conn,
+            spider,
+            adapter,
+            run_id=run_id,
+            locatore_cf=locatore_cf,
+            loc_addr_id=person_sync.loc_addr_id,
+            visura_ingest=visura_ingest,
+        )
+        return visura_ingest
+
+    def _run_generation_phase(self, conn, spider, adapter, *, run_id: str, locatore_cf: str) -> None:
+        """Continue past the import-only boundary into contract and document stages."""
+        immobili_db = db_load_immobili(conn, locatore_cf)
+        selected = filter_immobiles_by_yaml(immobili_db, adapter)
+
+        for immobile_id, imm in selected:
+            contract_sync = self.contract_sync_service.sync(
+                conn,
+                adapter,
+                run_id=run_id,
+                client_cf=locatore_cf,
+                immobile_id=immobile_id,
+            )
+
+            canone_stage = self.canone_stage_service.run(
+                conn,
+                spider,
+                adapter,
+                run_id=run_id,
+                locatore_cf=locatore_cf,
+                imm=imm,
+                contract_id=contract_sync.contract_id,
+                contract_ctx=contract_sync.contract_ctx,
+            )
+
+            self.document_stage_service.run(
+                conn,
+                spider,
+                adapter,
+                run_id=run_id,
+                imm=imm,
+                contract_ctx=canone_stage.contract_ctx,
+                contract_id=contract_sync.contract_id,
+                immobile_id=immobile_id,
+                locatore_cf=locatore_cf,
+                canone_result_snapshot=canone_stage.canone_result_snapshot,
+            )

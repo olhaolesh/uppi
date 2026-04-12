@@ -1,4 +1,4 @@
-"""Нормалізує записи з clients.yml у типізований конфіг клієнта."""
+"""Legacy normalizer for flat `clients.yml` records used by the current spider."""
 
 from __future__ import annotations
 

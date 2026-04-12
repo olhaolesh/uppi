@@ -20,3 +20,16 @@ class UppiPipeline:
     def process_item(self, item, spider):
         """Передає item у сервіс без додаткової логіки в самому pipeline."""
         return self.processor.process_item(item, spider)
+
+
+class UppiImportPipeline:
+    """Delegate items to the import-only processor entry point."""
+
+    def __init__(self):
+        """Піднімає logging foundation і створює сервіс обробки item-ів."""
+        configure_uppi_logging()
+        self.processor = VisuraProcessor()
+
+    def process_item(self, item, spider):
+        """Передає item у import-only boundary без generation continuation."""
+        return self.processor.process_import_item(item, spider)

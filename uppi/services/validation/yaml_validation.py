@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from uppi.config.clients import ClientConfig
+from uppi.config.immobili import IMMOBILE_ONLY_KEYS, ROOT_ONLY_KEYS
 from uppi.services.validation.models import ValidationResult
 from uppi.utils.parse_utils import safe_float
 
@@ -73,5 +74,73 @@ def validate_client_config(client_cfg: ClientConfig) -> ValidationResult:
             "CANONE_CONTRATTUALE_MENSILE не виглядає як число й буде оброблено current fallback-логікою.",
             field="canone_contrattuale_mensile",
         )
+
+    return result
+
+
+def validate_immobili_document_yaml(raw: Any) -> ValidationResult:
+    """Performs structural validation for the single-client `immobili.yml` contract."""
+    result = ValidationResult()
+
+    if not isinstance(raw, dict):
+        result.add_error(
+            "immobili_document_not_mapping",
+            "Single-client immobili.yml must be a root mapping.",
+        )
+        return result
+
+    locatore_cf = str(raw.get("LOCATORE_CF") or raw.get("locatore_cf") or "").strip()
+    if not locatore_cf:
+        result.add_error(
+            "immobili_document_missing_locatore_cf",
+            "LOCATORE_CF is required at the root level of immobili.yml.",
+            field="LOCATORE_CF",
+        )
+
+    root_keys = {str(key).strip().upper() for key in raw.keys()}
+    misplaced_immobile_fields = sorted((root_keys - {"IMMOBILI"}) & IMMOBILE_ONLY_KEYS)
+    if misplaced_immobile_fields:
+        result.add_error(
+            "immobili_document_root_contains_immobile_fields",
+            "Root-level document cannot contain immobile-only fields: "
+            + ", ".join(misplaced_immobile_fields),
+            field="immobili",
+        )
+
+    if "immobili" not in raw:
+        result.add_error(
+            "immobili_document_missing_immobili",
+            "Single-client immobili.yml must contain an 'immobili' list.",
+            field="immobili",
+        )
+        return result
+
+    immobili = raw.get("immobili")
+    if not isinstance(immobili, list):
+        result.add_error(
+            "immobili_document_immobili_not_list",
+            "The 'immobili' field must be a list.",
+            field="immobili",
+        )
+        return result
+
+    for index, entry in enumerate(immobili):
+        field_name = f"immobili[{index}]"
+        if not isinstance(entry, dict):
+            result.add_error(
+                "immobili_document_item_not_mapping",
+                f"{field_name} must be a mapping.",
+                field=field_name,
+            )
+            continue
+
+        entry_keys = {str(key).strip().upper() for key in entry.keys()}
+        misplaced_root_fields = sorted(entry_keys & ROOT_ONLY_KEYS)
+        if misplaced_root_fields:
+            result.add_error(
+                "immobili_document_item_contains_root_fields",
+                f"{field_name} cannot contain root-only fields: " + ", ".join(misplaced_root_fields),
+                field=field_name,
+            )
 
     return result

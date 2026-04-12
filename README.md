@@ -4,8 +4,27 @@ UPPI автоматизує отримання кадастрових випис
 обробляє їх у non-browser pipeline, записує дані в PostgreSQL, завантажує
 артефакти в object storage і генерує DOCX-документи `Attestazione`.
 
-Цей `README.md` є головним entry point документації. Якщо треба зрозуміти
-проєкт з нуля, починайте звідси, а не зі sprint/refactor-plan файлів.
+Цей `README.md` є головним entry point документації. Для поточної хвилі rollout
+цільовий контракт треба читати спочатку в
+[docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md),
+а вже потім у runtime та plan docs.
+
+## Rollout Source of Truth
+
+Для цього change wave canonical документами є:
+
+- [docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md)
+  Нормативний контракт для режимів `prepare`, bulk import і generation, shape
+  `immobili.yml`, field classification і clear semantics.
+- [docs/adr_0001_single_client_immobili_contract.md](docs/adr_0001_single_client_immobili_contract.md)
+  Коротке ADR з причинами відмови від multi-CF / flat-list input.
+
+Важливо:
+
+- ці документи описують rollout target contract;
+- частина runtime docs нижче все ще описує поточну legacy mixed-flow
+  реалізацію, доки runtime-зміни ще не внесені;
+- protected invariants для browser-critical зон лишаються без змін.
 
 ## Що робить проєкт
 
@@ -23,7 +42,11 @@ UPPI автоматизує отримання кадастрових випис
 - `state.json` має protected lifecycle contract
 - structural refactor уже зроблено, але browser flow навмисно не redesign-ився
 
-## Як виглядає runtime flow
+## Як виглядає current runtime flow
+
+Нижче описана поточна реалізація, а не rollout target contract. Для нового
+single-client `immobili.yml`, ролі `prepare`, bulk import і generation див.
+[docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md).
 
 Коротко один run проходить так:
 
@@ -82,12 +105,14 @@ UPPI автоматизує отримання кадастрових випис
 Recommended reading order:
 
 1. [README.md](README.md)
-2. [Поточна архітектура](docs/current_architecture.md)
-3. [Основний runtime flow](docs/runtime_flow.md)
-4. [Protected invariants](docs/refactor_protected_invariants.md)
-5. [Локальний запуск і тести](docs/local_development_and_testing.md)
-6. [Document generation](docs/document_generation.md)
-7. Reference docs за потреби:
+2. [Rollout source of truth](docs/immobili_rollout_source_of_truth.md)
+3. [ADR 0001](docs/adr_0001_single_client_immobili_contract.md)
+4. [Поточна архітектура](docs/current_architecture.md)
+5. [Current runtime flow](docs/runtime_flow.md)
+6. [Protected invariants](docs/refactor_protected_invariants.md)
+7. [Локальний запуск і тести](docs/local_development_and_testing.md)
+8. [Document generation](docs/document_generation.md)
+9. Reference docs за потреби:
    - [Failure registry](docs/failure_registry_contract.md)
    - [Transaction / resource safety](docs/transaction_resource_safety_review.md)
    - [Workspace / local artifacts](docs/workspace_local_artifacts_policy.md)
@@ -96,14 +121,25 @@ Recommended reading order:
 
 ## Карта документації
 
+### Rollout contract docs
+
+- [docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md)
+  Canonical source of truth для нового rollout contract.
+- [docs/adr_0001_single_client_immobili_contract.md](docs/adr_0001_single_client_immobili_contract.md)
+  ADR про single-client YAML і generation boundary.
+- [docs/uppi_update_implementation_plan.md](docs/uppi_update_implementation_plan.md)
+  Детальний implementation plan, підпорядкований source-of-truth документу.
+- [docs/Uppi_Покроковий_План_Виконання.md](docs/Uppi_Покроковий_План_Виконання.md)
+  Практичний execution order, теж не є окремим normative contract.
+
 ### Current operational docs
 
 - [docs/current_architecture.md](docs/current_architecture.md)
   Загальна карта шарів, boundaries і модулів.
 - [docs/runtime_flow.md](docs/runtime_flow.md)
-  Послідовність виконання одного run і одного client/item.
+  Поточний implemented mixed runtime flow; legacy reference для rollout target.
 - [docs/local_development_and_testing.md](docs/local_development_and_testing.md)
-  Встановлення, `.env`, локальний запуск, тести, verification gates.
+  Локальний запуск поточної реалізації; legacy config/input notes для rollout.
 - [docs/document_generation.md](docs/document_generation.md)
   Як працює DOCX generation і де лежить canonical template-filler.
 - [docs/refactor_protected_invariants.md](docs/refactor_protected_invariants.md)
@@ -146,6 +182,10 @@ Recommended reading order:
 ## Локальний запуск
 
 Швидкий старт:
+
+Для rollout-target режимів див.
+[docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md).
+Нижче лишається current implemented command surface до моменту runtime-змін.
 
 1. Створити `.env`
 2. Ініціалізувати БД:

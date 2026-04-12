@@ -3,9 +3,17 @@
 Цей документ пояснює, що саме відбувається під час одного run, у якій
 послідовності це виконується і які модулі беруть участь на кожному етапі.
 
-## 1. Що є input
+Legacy note для rollout:
 
-Основний input — `clients.yml`.
+- цей файл описує поточну implemented mixed-flow модель;
+- він не є source of truth для нового rollout contract;
+- для single-client `immobili.yml`, трьох цільових режимів і правила
+  `prepare owns fetch/update logic` див.
+  [./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md).
+
+## 1. Що є input у поточній реалізації
+
+Основний input у поточній реалізації — `clients.yml`.
 
 Code path:
 

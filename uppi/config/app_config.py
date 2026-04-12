@@ -71,8 +71,74 @@ class DatabaseConfig:
 
 
 @dataclass(frozen=True)
+class ImmobiliYamlSourceConfig:
+    """Canonical generation input source for single-client `immobili.yml`."""
+
+    immobili_dir: Path
+    immobili_file: Path
+
+    @classmethod
+    def from_env(
+        cls,
+        *,
+        repo_root: Path | None = None,
+        default_immobili_file: Path | None = None,
+    ) -> "ImmobiliYamlSourceConfig":
+        """Resolves `UPPI_IMMOBILI_YAML` or falls back to the canonical local path."""
+        resolved_root = repo_root or project_root()
+        fallback_file = default_immobili_file or (resolved_root / "clients" / "immobili.yml")
+        env_override = _normalize_optional_path(
+            config("UPPI_IMMOBILI_YAML", default=""),
+            base_dir=resolved_root,
+        )
+        immobili_file = env_override or fallback_file
+        return cls(
+            immobili_dir=immobili_file.parent,
+            immobili_file=immobili_file,
+        )
+
+    @classmethod
+    def default(cls, *, repo_root: Path | None = None) -> "ImmobiliYamlSourceConfig":
+        """Returns the canonical generation source config."""
+        return cls.from_env(repo_root=repo_root)
+
+
+@dataclass(frozen=True)
+class ClientsCsvSourceConfig:
+    """Bulk input source for `clients.csv`, kept separate from generation input."""
+
+    clients_dir: Path
+    clients_file: Path
+
+    @classmethod
+    def from_env(
+        cls,
+        *,
+        repo_root: Path | None = None,
+        default_clients_file: Path | None = None,
+    ) -> "ClientsCsvSourceConfig":
+        """Resolves future bulk CSV input with an additive env override."""
+        resolved_root = repo_root or project_root()
+        fallback_file = default_clients_file or (resolved_root / "clients" / "clients.csv")
+        env_override = _normalize_optional_path(
+            config("UPPI_CLIENTS_CSV", default=""),
+            base_dir=resolved_root,
+        )
+        clients_file = env_override or fallback_file
+        return cls(
+            clients_dir=clients_file.parent,
+            clients_file=clients_file,
+        )
+
+    @classmethod
+    def default(cls, *, repo_root: Path | None = None) -> "ClientsCsvSourceConfig":
+        """Returns the default bulk CSV source config."""
+        return cls.from_env(repo_root=repo_root)
+
+
+@dataclass(frozen=True)
 class ClientsSourceConfig:
-    """Описує поточне джерело clients.yml і його default-параметри."""
+    """Legacy/transitional source for flat `clients.yml` records."""
 
     clients_dir: Path
     clients_file: Path
@@ -147,8 +213,15 @@ class AppConfig:
     """Агрегує bootstrap-конфіг, який далі можна ін’єктувати в сервіси."""
 
     database: DatabaseConfig
-    clients: ClientsSourceConfig
+    immobili: ImmobiliYamlSourceConfig
+    clients_csv: ClientsCsvSourceConfig
+    legacy_clients: ClientsSourceConfig
     visura_processor: VisuraProcessorRuntimeConfig
+
+    @property
+    def clients(self) -> ClientsSourceConfig:
+        """Legacy alias kept for current runtime surfaces until spider rollout changes."""
+        return self.legacy_clients
 
     @classmethod
     def from_env(cls, *, repo_root: Path | None = None) -> "AppConfig":
@@ -162,6 +235,8 @@ class AppConfig:
         resolved_root = repo_root or project_root()
         return cls(
             database=DatabaseConfig.from_env(),
-            clients=ClientsSourceConfig.from_env(repo_root=resolved_root),
+            immobili=ImmobiliYamlSourceConfig.from_env(repo_root=resolved_root),
+            clients_csv=ClientsCsvSourceConfig.from_env(repo_root=resolved_root),
+            legacy_clients=ClientsSourceConfig.from_env(repo_root=resolved_root),
             visura_processor=VisuraProcessorRuntimeConfig.from_env(repo_root=resolved_root),
         )

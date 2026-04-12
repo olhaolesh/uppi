@@ -95,3 +95,45 @@ class CanoneInputValidationError(RecoverableValidationError):
     """Структурно зламаний вхід для canone stage, який можна локально пропустити."""
 
     code = "canone_input_validation_error"
+
+
+class ImmobiliDocumentNotFoundError(NonRecoverableDomainError):
+    """Requested CF does not have enough DB state to build a generated immobili document."""
+
+    code = "immobili_document_not_found"
+
+
+class PrepareModeError(NonRecoverableDomainError):
+    """Base application-level error for prepare-by-CF orchestration."""
+
+    code = "prepare_mode_error"
+
+
+class PrepareInputError(PrepareModeError):
+    """Raised when `prepare-by-cf` receives a missing or malformed CF."""
+
+    code = "prepare_input_error"
+
+
+class PrepareImportFailedError(PrepareModeError):
+    """Raised when the import-only runner cannot complete successfully."""
+
+    code = "prepare_import_failed"
+
+
+class PrepareNoDataError(PrepareModeError):
+    """Raised when prepare cannot find DB-backed data to build `immobili.yml`."""
+
+    code = "prepare_no_data"
+
+
+class PrepareGenerationFailedError(PrepareModeError):
+    """Raised when YAML generation fails after prepare completed its DB work."""
+
+    code = "prepare_generation_failed"
+
+
+class PrepareOutputWriteError(PrepareModeError):
+    """Raised when prepare cannot persist the generated `immobili.yml`."""
+
+    code = "prepare_output_write_error"

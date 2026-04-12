@@ -1,5 +1,5 @@
 """
-Маппер полів з clients.yml у структуру UppiItem.
+Legacy mapper for flat `clients.yml` rows into the current `UppiItem` shape.
 
 Бере сирий dict з YAML (ключі типу LOCATORE_CF, COMUNE, A1, B2, ...)
 і перетворює його у нормалізований dict під UppiItem
@@ -104,11 +104,11 @@ DEFAULTS: Dict[str, Any] = {
 
 def map_yaml_to_item(client: Mapping[str, Any]) -> Dict[str, Any]:
     """
-    Перетворює dict з clients.yml в dict під UppiItem.
+    Перетворює legacy dict з flat `clients.yml` в dict під UppiItem.
 
     - Нормалізує ключі до UPPERCASE.
     - Перекладає відомі ключі через YAML_TO_ITEM_MAP.
-    - Додає дефолти для COMUNE/TIPO_CATASTO/UFFICIO_PROVINCIALE_LABEL, якщо їх немає.
+    - Додає legacy-дефолти для COMUNE/TIPO_CATASTO/UFFICIO_PROVINCIALE_LABEL, якщо їх немає.
     - Невідомі ключі кладе в item["extra"].
 
     Повертає:

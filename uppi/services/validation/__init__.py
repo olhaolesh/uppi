@@ -11,6 +11,7 @@ from uppi.services.validation.parser_validation import validate_parsed_visura_ou
 from uppi.services.validation.yaml_validation import (
     validate_client_config,
     validate_client_yaml_record,
+    validate_immobili_document_yaml,
 )
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "validate_canone_input",
     "validate_client_config",
     "validate_client_yaml_record",
+    "validate_immobili_document_yaml",
     "validate_parsed_visura_output",
 ]

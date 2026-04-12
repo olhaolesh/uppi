@@ -14,8 +14,10 @@ import psycopg2
 import psycopg2.extras
 import pytest
 from itemadapter import ItemAdapter
+import yaml
 
 import uppi.domain.db as domain_db
+from uppi.domain.exceptions import ImmobiliDocumentNotFoundError
 from uppi.domain.immobile import Immobile
 from uppi.services.db_repo import (
     db_apply_immobile_elements,
@@ -31,6 +33,14 @@ from uppi.services.db_repo import (
     db_upsert_visura,
     fetch_visura_state,
 )
+from uppi.services.immobili_yaml_generator import (
+    ImmobiliDocumentMetadataDefaults,
+    ImmobiliYamlGeneratorService,
+    build_immobili_document_from_db,
+    dump_immobili_document_yaml,
+    write_immobili_document_yaml,
+)
+from uppi.services.repositories.prepare_document_repo import db_load_prepare_document_presence
 
 
 SCHEMA_FILE = Path(__file__).resolve().parents[1] / "uppi" / "utils" / "db_utils" / "uppi_schema.sql"
@@ -576,3 +586,234 @@ def test_known_current_behavior_missing_contract_kind_resets_existing_contract_t
     assert str(row["id"]) == contract_id
     assert row["contract_kind"] == "CONCORDATO"
     assert row["durata_anni"] == 6
+
+
+def test_build_immobili_document_from_db_generates_single_client_shape_with_blank_run_only_fields(pg_conn):
+    """Перевіряє сценарій, описаний у назві тесту."""
+    owner_cf, _ = _seed_owner(pg_conn, comune="Chieti")
+    cond_addr_id = db_upsert_address(
+        pg_conn,
+        {"comune": "Pescara", "via_full": "Via Conduttore", "civico": "33"},
+    )
+    db_upsert_person(pg_conn, "BNCMRA80A01H501Z", surname="Bianchi", name="Mario", address_id=cond_addr_id)
+
+    visura_addr_b = db_upsert_address(
+        pg_conn,
+        {"comune": "Pescara", "via_full": "Via Beta", "civico": "20"},
+    )
+    visura_addr_a = db_upsert_address(
+        pg_conn,
+        {"comune": "Pescara", "via_full": "Via Alfa", "civico": "11"},
+    )
+    real_addr_a = db_upsert_address(
+        pg_conn,
+        {"comune": "Montesilvano", "via_full": "Via Override", "civico": "7", "piano": "4", "interno": "9"},
+    )
+
+    immobile_b = db_upsert_immobile(
+        pg_conn,
+        owner_cf,
+        _make_immobile(foglio="20", numero="100", sub="2", categoria="A/3", rendita="€ 555.00"),
+        visura_addr_id=visura_addr_b,
+        source_visura_id=None,
+    )
+    immobile_a = db_upsert_immobile(
+        pg_conn,
+        owner_cf,
+        _make_immobile(foglio="12", numero="345", sub="7", categoria="A/2", rendita="€ 123.45"),
+        visura_addr_id=visura_addr_a,
+        source_visura_id=None,
+    )
+    db_update_immobile_real_address(pg_conn, immobile_a, real_address_id=real_addr_a, energy_class="A")
+    db_upsert_immobile_elements(pg_conn, immobile_a, ItemAdapter({"a1": "X", "d12": "Y"}))
+
+    db_upsert_contract(
+        pg_conn,
+        immobile_a,
+        ItemAdapter(
+            {
+                "contract_kind": "TRANSITORIO",
+                "arredato": "0.10",
+                "istat": 5,
+                "ignore_surcharges": "yes",
+                "conduttore_cf": "BNCMRA80A01H501Z",
+                "contratto_data": "01/01/2025",
+                "decorrenza_data": "01/02/2025",
+                "registrazione_data": "05/02/2025",
+                "registrazione_num": "REG-123",
+                "agenzia_entrate_sede": "PESCARA",
+                "canone_contrattuale_mensile": "650",
+                "durata_anni": "4",
+            }
+        ),
+    )
+    pg_conn.commit()
+
+    document = build_immobili_document_from_db(
+        pg_conn,
+        owner_cf,
+        metadata_defaults=ImmobiliDocumentMetadataDefaults(
+            comune="PESCARA",
+            tipo_catasto="F",
+            ufficio_provinciale_label="PESCARA Territorio",
+        ),
+    )
+
+    assert document.locatore_cf == owner_cf
+    assert document.comune == "PESCARA"
+    assert document.tipo_catasto == "F"
+    assert document.ufficio_label == "PESCARA Territorio"
+    assert document.locatore_comune_res == "Chieti"
+    assert document.locatore_via == "Via Roma"
+    assert document.locatore_civico == "10"
+
+    assert [(imm.foglio, imm.numero, imm.sub) for imm in document.immobili] == [
+        ("12", "345", "7"),
+        ("20", "100", "2"),
+    ]
+
+    first = document.immobili[0]
+    assert first.enabled is True
+    assert first.rendita == "€ 123.45"
+    assert first.categoria == "A/2"
+    assert first.visura_comune == "Pescara"
+    assert first.visura_via == "Via Alfa"
+    assert first.visura_civico == "11"
+    assert first.immobile_comune == "Montesilvano"
+    assert first.immobile_via == "Via Override"
+    assert first.immobile_civico == "7"
+    assert first.immobile_piano == "4"
+    assert first.immobile_interno == "9"
+    assert first.energy_class == "A"
+    assert first.contract_kind == "TRANSITORIO"
+    assert first.arredato == 0.1
+    assert first.istat == 5.0
+    assert first.ignore_surcharges is True
+    assert first.elements == {"a1": "X", "d12": "Y"}
+
+    # Run-only fields must stay blank in the generated document, even if present in contracts.
+    assert first.conduttore_cf is None
+    assert first.contratto_data is None
+    assert first.decorrenza_data is None
+    assert first.registrazione_data is None
+    assert first.registrazione_num is None
+    assert first.agenzia_entrate_sede is None
+    assert first.canone_contrattuale_mensile is None
+    assert first.durata_anni is None
+
+    second = document.immobili[1]
+    assert second.energy_class is None
+    assert second.contract_kind is None
+    assert second.arredato is None
+    assert second.istat is None
+    assert second.ignore_surcharges is None
+    assert second.elements == {}
+
+
+def test_immobili_yaml_generator_service_serializes_stably_and_raises_not_found(temp_postgres_db, pg_conn, tmp_path):
+    """Перевіряє сценарій, описаний у назві тесту."""
+    owner_cf, _ = _seed_owner(pg_conn)
+    visura_addr_id = db_upsert_address(
+        pg_conn,
+        {"comune": "Pescara", "via_full": "Corso Roma", "civico": "12"},
+    )
+    immobile_id = db_upsert_immobile(
+        pg_conn,
+        owner_cf,
+        _make_immobile(sub=""),
+        visura_addr_id=visura_addr_id,
+        source_visura_id=None,
+    )
+    db_upsert_immobile_elements(pg_conn, immobile_id, ItemAdapter({"b2": "Y"}))
+    db_upsert_contract(
+        pg_conn,
+        immobile_id,
+        ItemAdapter(
+            {
+                "contract_kind": "STUDENTI",
+                "arredato": "0.25",
+                "istat": "2.5",
+                "ignore_surcharges": "no",
+                "contratto_data": "09/09/2025",
+            }
+        ),
+    )
+    pg_conn.commit()
+
+    service = ImmobiliYamlGeneratorService(connection_factory=temp_postgres_db.connect)
+
+    yaml_text_1 = service.dump_yaml(owner_cf)
+    yaml_text_2 = service.dump_yaml(owner_cf)
+
+    assert yaml_text_1 == yaml_text_2
+
+    payload = yaml.safe_load(yaml_text_1)
+    assert list(payload.keys()) == [
+        "LOCATORE_CF",
+        "COMUNE",
+        "TIPO_CATASTO",
+        "UFFICIO_PROVINCIALE_LABEL",
+        "LOCATORE_COMUNE_RES",
+        "LOCATORE_VIA",
+        "LOCATORE_CIVICO",
+        "immobili",
+    ]
+    assert payload["immobili"][0]["enabled"] is True
+    assert payload["immobili"][0]["FOGLIO"] == "12"
+    assert payload["immobili"][0]["VISURA_VIA"] == "Corso Roma"
+    assert payload["immobili"][0]["CONTRACT_KIND"] == "STUDENTI"
+    assert payload["immobili"][0]["ARREDATO"] == 0.25
+    assert payload["immobili"][0]["ISTAT"] == 2.5
+    assert payload["immobili"][0]["IGNORE_SURCHARGES"] is False
+    assert payload["immobili"][0]["B2"] == "Y"
+    assert payload["immobili"][0]["CONTRATTO_DATA"] == ""
+    assert payload["immobili"][0]["CANONE_CONTRATTUALE_MENSILE"] == ""
+    assert payload["immobili"][0]["DURATA_ANNI"] == ""
+
+    output_path = tmp_path / "generated" / "generated-immobili.yml"
+    write_immobili_document_yaml(service.build_document(owner_cf), output_path)
+    assert output_path.read_text(encoding="utf-8") == yaml_text_1
+
+    with pytest.raises(ImmobiliDocumentNotFoundError):
+        service.build_document("MISSINGCF12345")
+
+
+def test_prepare_document_presence_uses_person_plus_immobile_as_db_hit_criterion(pg_conn):
+    """Prepare DB hit/miss should be deterministic and aligned with generator readiness."""
+    owner_cf = "RSSMRA80A01H501Z"
+
+    missing = db_load_prepare_document_presence(pg_conn, owner_cf)
+
+    assert missing.locatore_cf == owner_cf
+    assert missing.root_found is False
+    assert missing.immobili_count == 0
+    assert missing.is_hit is False
+
+    _seed_owner(pg_conn, cf=owner_cf)
+    root_only = db_load_prepare_document_presence(pg_conn, owner_cf)
+
+    assert root_only.root_found is True
+    assert root_only.immobili_count == 0
+    assert root_only.is_hit is False
+
+    visura_addr_id = db_upsert_address(
+        pg_conn,
+        {
+            "comune": "Pescara",
+            "via_full": "Corso Roma",
+            "civico": "12",
+        },
+    )
+    db_upsert_immobile(
+        pg_conn,
+        owner_cf,
+        _make_immobile(),
+        visura_addr_id=visura_addr_id,
+        source_visura_id=None,
+    )
+
+    hit = db_load_prepare_document_presence(pg_conn, owner_cf)
+
+    assert hit.root_found is True
+    assert hit.immobili_count == 1
+    assert hit.is_hit is True

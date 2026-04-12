@@ -8,6 +8,7 @@ from uppi.services.validation import (
     validate_canone_input,
     validate_client_config,
     validate_client_yaml_record,
+    validate_immobili_document_yaml,
     validate_parsed_visura_output,
 )
 
@@ -27,6 +28,43 @@ def test_validate_client_yaml_record_flags_missing_locatore_cf_as_structural_err
 
     assert result.is_valid is False
     assert [issue.code for issue in result.errors] == ["yaml_missing_locatore_cf"]
+
+
+def test_validate_immobili_document_yaml_accepts_valid_single_client_shape():
+    """Перевіряє сценарій, описаний у назві тесту."""
+    result = validate_immobili_document_yaml(
+        {
+            "LOCATORE_CF": "ABCDEF12G34H567I",
+            "COMUNE": "PESCARA",
+            "immobili": [
+                {"FOGLIO": "12", "NUMERO": "345", "SUB": "7"},
+            ],
+        }
+    )
+
+    assert result.is_valid is True
+    assert result.errors == []
+
+
+def test_validate_immobili_document_yaml_flags_root_vs_immobile_shape_mistakes():
+    """Перевіряє сценарій, описаний у назві тесту."""
+    result = validate_immobili_document_yaml(
+        {
+            "LOCATORE_CF": "ABCDEF12G34H567I",
+            "FOGLIO": "12",
+            "immobili": [
+                {"LOCATORE_VIA": "Via Roma", "NUMERO": "345"},
+                "not-a-mapping",
+            ],
+        }
+    )
+
+    assert result.is_valid is False
+    assert {issue.code for issue in result.errors} == {
+        "immobili_document_root_contains_immobile_fields",
+        "immobili_document_item_contains_root_fields",
+        "immobili_document_item_not_mapping",
+    }
 
 
 def test_validate_client_config_warning_first_for_questionable_but_tolerated_values():

@@ -6,7 +6,14 @@ from pathlib import Path
 
 import yaml
 
-from uppi.config.app_config import AppConfig, ClientsSourceConfig, DatabaseConfig, project_root
+from uppi.config.app_config import (
+    AppConfig,
+    ClientsCsvSourceConfig,
+    ClientsSourceConfig,
+    DatabaseConfig,
+    ImmobiliYamlSourceConfig,
+    project_root,
+)
 from uppi.domain.clients import default_clients_source_config, load_clients
 from uppi.domain.db import build_pg_connection_kwargs, get_pg_connection
 from uppi.domain.object_storage import ObjectStorage, ObjectStorageConfig, create_object_storage
@@ -46,6 +53,8 @@ def test_app_config_from_env_uses_current_env_resolution_and_canonical_paths(mon
     monkeypatch.setenv("PRUNE_OLD_IMMOBILI_WITHOUT_CONTRACTS", "False")
     monkeypatch.setenv("DELETE_LOCAL_VISURA_AFTER_UPLOAD", "True")
     monkeypatch.setenv("UPPI_CLIENTS_YAML", "")
+    monkeypatch.setenv("UPPI_IMMOBILI_YAML", "")
+    monkeypatch.setenv("UPPI_CLIENTS_CSV", "")
 
     cfg = AppConfig.from_env()
 
@@ -56,10 +65,15 @@ def test_app_config_from_env_uses_current_env_resolution_and_canonical_paths(mon
     assert cfg.database.user == "custom_user"
     assert cfg.database.password == "custom_password"
     assert cfg.database.ssl_mode == "require"
-    assert cfg.clients.clients_file == project_root() / "clients" / "clients.yml"
-    assert cfg.clients.default_comune == "PESCARA"
-    assert cfg.clients.default_tipo_catasto == "F"
-    assert cfg.clients.default_ufficio_label == "PESCARA Territorio"
+    assert cfg.immobili == ImmobiliYamlSourceConfig.from_env()
+    assert cfg.immobili.immobili_file == project_root() / "clients" / "immobili.yml"
+    assert cfg.clients_csv == ClientsCsvSourceConfig.from_env()
+    assert cfg.clients_csv.clients_file == project_root() / "clients" / "clients.csv"
+    assert cfg.legacy_clients.clients_file == project_root() / "clients" / "clients.yml"
+    assert cfg.legacy_clients.default_comune == "PESCARA"
+    assert cfg.legacy_clients.default_tipo_catasto == "F"
+    assert cfg.legacy_clients.default_ufficio_label == "PESCARA Territorio"
+    assert cfg.clients.clients_file == cfg.legacy_clients.clients_file
     assert cfg.visura_processor.ae_username == "agent.test"
     assert cfg.visura_processor.template_version == "custom_template_v1"
     assert cfg.visura_processor.prune_old_immobili_without_contracts is False
@@ -159,8 +173,19 @@ def test_app_config_from_env_uses_uppi_clients_yaml_override_for_clients_source(
 
     cfg = AppConfig.from_env()
 
-    assert cfg.clients.clients_file == override_path
-    assert cfg.clients.clients_dir == override_path.parent
+    assert cfg.legacy_clients.clients_file == override_path
+    assert cfg.legacy_clients.clients_dir == override_path.parent
+
+
+def test_app_config_from_env_uses_uppi_immobili_yaml_override_for_generation_source(monkeypatch, tmp_path):
+    """Перевіряє сценарій, описаний у назві тесту."""
+    override_path = tmp_path / "override-immobili.yml"
+    monkeypatch.setenv("UPPI_IMMOBILI_YAML", str(override_path))
+
+    cfg = AppConfig.from_env()
+
+    assert cfg.immobili.immobili_file == override_path
+    assert cfg.immobili.immobili_dir == override_path.parent
 
 
 def test_visura_processor_uses_injected_storage_and_runtime_config_without_changing_default_wiring():

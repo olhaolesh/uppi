@@ -3,6 +3,14 @@
 Цей документ пояснює, як підняти проєкт локально, які команди запускати і як
 перевіряти зміни без випадкового порушення protected flow.
 
+Legacy note для rollout:
+
+- цей файл описує поточну implemented command/config surface;
+- він не є source of truth для нового contract split між `prepare`, bulk import
+  і generation;
+- для rollout-target режимів і нового `immobili.yml` див.
+  [./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md).
+
 ## 1. Що потрібно локально
 
 - Python 3.11
@@ -41,7 +49,7 @@ Current schema file:
 - 2Captcha key
 - PostgreSQL
 - S3-compatible storage
-- `UPPI_CLIENTS_YAML`
+- `UPPI_CLIENTS_YAML` у поточній legacy реалізації
 - runtime flags для pipeline
 
 Current config surface:
@@ -49,7 +57,7 @@ Current config surface:
 - [../uppi/config/app_config.py](../uppi/config/app_config.py)
 - [../uppi/config/workspace.py](../uppi/config/workspace.py)
 
-## 5. Локальний запуск
+## 5. Локальний запуск поточної реалізації
 
 Основний запуск:
 
@@ -61,7 +69,8 @@ scrapy crawl uppi
 
 - перевірити `.env`
 - переконатися, що DB і storage доступні
-- переконатися, що `clients.yml` вказує на потрібний input
+- переконатися, що `clients.yml` вказує на потрібний input у поточній
+  реалізації
 
 ## 6. Основна тестова команда
 

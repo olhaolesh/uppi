@@ -1,4 +1,4 @@
-"""Читає clients.yml і підтримує explicit path, env override та default fallback."""
+"""Legacy flat `clients.yml` loader kept as a transitional compatibility layer."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ DEFAULT_UFFICIO = "PESCARA Territorio"
 
 
 def default_clients_source_config() -> ClientsSourceConfig:
-    """Повертає active clients-source з env override або canonical default path."""
+    """Повертає legacy clients-source з env override або canonical default path."""
     return ClientsSourceConfig.from_env(
         repo_root=CLIENTS_DIR.parent,
         default_clients_file=CLIENTS_FILE,
@@ -126,7 +126,7 @@ def load_clients(
     source_config: ClientsSourceConfig | None = None,
 ) -> List[Dict[str, Any]]:
     """
-    Завантажує клієнтів із explicit path, active source_config або default fallback.
+    Завантажує legacy flat clients із explicit path, active source_config або default fallback.
 
     Precedence order:
     1. explicit `path`
@@ -136,3 +136,17 @@ def load_clients(
     resolved_source_config = source_config or default_clients_source_config()
     resolved_path = Path(path) if path is not None else resolved_source_config.clients_file
     return _parse_yaml(resolved_path, source_config=resolved_source_config)
+
+
+def default_legacy_clients_source_config() -> ClientsSourceConfig:
+    """Explicit alias that marks the old flat loader as transitional/legacy."""
+    return default_clients_source_config()
+
+
+def load_legacy_clients(
+    path: Path | None = None,
+    *,
+    source_config: ClientsSourceConfig | None = None,
+) -> List[Dict[str, Any]]:
+    """Explicit alias for legacy callers that still need flat `clients.yml` rows."""
+    return load_clients(path=path, source_config=source_config)
