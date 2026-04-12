@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from uppi.domain.exceptions import PrepareImportFailedError
+from uppi.domain.exceptions import ImportOnlyRunnerFailedError
 from uppi.services.import_only_runner import ScrapyImportOnlyRunner
 
 
@@ -63,7 +63,7 @@ def test_scrapy_import_only_runner_writes_single_client_source_and_launches_inte
 
 
 def test_scrapy_import_only_runner_raises_typed_error_on_nonzero_exit(tmp_path):
-    """Prepare must receive an explicit import failure when the spider process exits non-zero."""
+    """Service modes must receive an explicit import failure when the spider exits non-zero."""
     def fake_subprocess_runner(cmd, *, cwd, env, text, capture_output):
         return subprocess.CompletedProcess(cmd, 1, stdout="bad", stderr="boom")
 
@@ -73,7 +73,7 @@ def test_scrapy_import_only_runner_raises_typed_error_on_nonzero_exit(tmp_path):
         temp_dir_factory=lambda: _StaticTempDir(tmp_path / "runtime"),
     )
 
-    with pytest.raises(PrepareImportFailedError) as exc_info:
+    with pytest.raises(ImportOnlyRunnerFailedError) as exc_info:
         runner.run_for_cf("RSSMRA80A01H501Z", force_update_visura=True)
 
     assert exc_info.value.details["returncode"] == 1

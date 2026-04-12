@@ -8,7 +8,7 @@ from uppi.config.app_config import (
     ImmobiliYamlSourceConfig,
     VisuraProcessorRuntimeConfig,
 )
-from uppi.config.clients_csv import BulkClientCsvRow
+from uppi.config.clients_csv import BulkClientCsvInvalidRow, BulkClientCsvRow, BulkClientsCsvLoadResult
 from uppi.config.clients import ClientConfig
 from uppi.config.immobili import ImmobileConfig, ImmobiliDocumentConfig
 from uppi.config.workspace import WorkspaceConfig
@@ -22,6 +22,8 @@ __all__ = [
     "VisuraProcessorRuntimeConfig",
     "ClientConfig",
     "BulkClientCsvRow",
+    "BulkClientCsvInvalidRow",
+    "BulkClientsCsvLoadResult",
     "ImmobileConfig",
     "ImmobiliDocumentConfig",
     "WorkspaceConfig",

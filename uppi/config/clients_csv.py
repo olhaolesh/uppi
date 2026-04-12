@@ -26,8 +26,13 @@ class BulkClientCsvRow:
     extra: dict[str, str] = field(default_factory=dict)
 
     @classmethod
-    def from_raw(cls, raw: Mapping[str, str | None], *, row_number: int) -> "BulkClientCsvRow | None":
-        """Builds a normalized CSV row or returns `None` for blank lines."""
+    def parse_raw(
+        cls,
+        raw: Mapping[str, str | None],
+        *,
+        row_number: int,
+    ) -> "BulkClientCsvRow | BulkClientCsvInvalidRow | None":
+        """Builds a normalized row, an invalid-row record, or `None` for blank lines."""
         values = {
             _normalize_header(header): _normalize_cell(value)
             for header, value in raw.items()
@@ -35,11 +40,21 @@ class BulkClientCsvRow:
         }
 
         if not any(values.values()):
-            return None
+            return BulkClientCsvInvalidRow(
+                row_number=row_number,
+                values=values,
+                message=f"clients.csv row {row_number} is blank",
+                code="blank_row",
+            )
 
         locatore_cf = values.get("LOCATORE_CF") or values.get("CODICE_FISCALE") or ""
         if not locatore_cf:
-            raise ValueError(f"clients.csv row {row_number} is missing LOCATORE_CF")
+            return BulkClientCsvInvalidRow(
+                row_number=row_number,
+                values=values,
+                message=f"clients.csv row {row_number} is missing LOCATORE_CF",
+                code="missing_locatore_cf",
+            )
 
         extra = {
             header: value
@@ -53,3 +68,32 @@ class BulkClientCsvRow:
             values=values,
             extra=extra,
         )
+
+    @classmethod
+    def from_raw(cls, raw: Mapping[str, str | None], *, row_number: int) -> "BulkClientCsvRow | None":
+        """Builds a normalized CSV row or returns `None` for blank lines."""
+        parsed = cls.parse_raw(raw, row_number=row_number)
+        if isinstance(parsed, BulkClientCsvInvalidRow):
+            if parsed.code == "blank_row":
+                return None
+            raise ValueError(parsed.message)
+        return parsed
+
+
+@dataclass(frozen=True)
+class BulkClientCsvInvalidRow:
+    """One non-blank CSV row that could not be converted into a typed CF record."""
+
+    row_number: int
+    values: dict[str, str]
+    message: str
+    code: str
+
+
+@dataclass(frozen=True)
+class BulkClientsCsvLoadResult:
+    """Normalized CSV rows plus invalid-row diagnostics for bulk import workflows."""
+
+    rows: tuple[BulkClientCsvRow, ...]
+    invalid_rows: tuple[BulkClientCsvInvalidRow, ...]
+    total_rows: int

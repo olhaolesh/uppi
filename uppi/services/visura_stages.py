@@ -26,13 +26,16 @@ from uppi.domain.storage import get_attestazione_path
 from uppi.parsers.visura_pdf_parser import VisuraParser
 from uppi.services.attestazione_generator import build_template_params
 from uppi.services.db_repo import (
+    db_apply_immobile_elements,
     db_insert_attestazione_log,
     db_insert_canone_calc,
     db_load_contract_context,
     db_prune_old_immobili_without_contracts,
+    db_update_person_residence_address,
     db_update_immobile_real_address,
     db_upsert_address,
     db_upsert_contract,
+    db_upsert_generation_contract,
     db_upsert_immobile,
     db_upsert_immobile_elements,
     db_upsert_person,
@@ -40,6 +43,8 @@ from uppi.services.db_repo import (
     immobile_db_row,
     immobile_from_parsed_dict,
 )
+from uppi.services.policies.patch_policy import resolve_patch_value
+from uppi.services.repositories.prepare_document_repo import db_load_prepare_document_root
 from uppi.services.attestazione_template_filler import fill_attestazione_template, underscored
 from uppi.services.storage_minio import StorageService
 from uppi.services.validation import (
@@ -365,31 +370,83 @@ class ContractSyncService:
         run_id: str,
         client_cf: str,
         immobile_id: int,
+        imm: Immobile,
     ) -> ContractSyncResult:
-        """Виконує current real-address -> elements -> contract -> context chain."""
+        """Persist editable generation fields, then reload the joined contract context."""
         try:
-            real_addr_id = None
-            if adapter.get("immobile_comune") or adapter.get("immobile_via"):
-                real_addr_id = db_upsert_address(
-                    conn,
-                    {
-                        "comune": adapter.get("immobile_comune"),
-                        "via_full": adapter.get("immobile_via"),
-                        "civico": adapter.get("immobile_civico"),
-                        "piano": adapter.get("immobile_piano"),
-                        "interno": adapter.get("immobile_interno"),
-                    },
+            self._sync_locatore_root_fields(conn, adapter, client_cf)
+
+            real_addr_requested = any(
+                adapter.get(field) is not None
+                for field in (
+                    "immobile_comune",
+                    "immobile_via",
+                    "immobile_civico",
+                    "immobile_piano",
+                    "immobile_interno",
                 )
+            )
+            real_addr_id = None
+            clear_real_address = False
+            if real_addr_requested:
+                current_comune = getattr(imm, "immobile_comune_override", None)
+                current_via = getattr(imm, "immobile_via_override", None)
+                current_civico = getattr(imm, "immobile_civico_override", None)
+                current_piano = getattr(imm, "immobile_piano_override", None)
+                current_interno = getattr(imm, "immobile_interno_override", None)
+
+                merged_comune = resolve_patch_value(
+                    adapter.get("immobile_comune"),
+                    current_comune,
+                    default=None,
+                )
+                merged_via = resolve_patch_value(
+                    adapter.get("immobile_via"),
+                    current_via,
+                    default=None,
+                )
+                merged_civico = resolve_patch_value(
+                    adapter.get("immobile_civico"),
+                    current_civico,
+                    default=None,
+                )
+                merged_piano = resolve_patch_value(
+                    adapter.get("immobile_piano"),
+                    current_piano,
+                    default=None,
+                )
+                merged_interno = resolve_patch_value(
+                    adapter.get("immobile_interno"),
+                    current_interno,
+                    default=None,
+                )
+
+                if merged_comune and merged_via:
+                    real_addr_id = db_upsert_address(
+                        conn,
+                        {
+                            "comune": merged_comune,
+                            "via_full": merged_via,
+                            "civico": merged_civico,
+                            "piano": merged_piano,
+                            "interno": merged_interno,
+                        },
+                    )
+                else:
+                    clear_real_address = True
 
             db_update_immobile_real_address(
                 conn,
                 immobile_id,
                 real_address_id=real_addr_id,
                 energy_class=adapter.get("energy_class"),
+                clear_real_address=clear_real_address,
             )
-            db_upsert_immobile_elements(conn, immobile_id, adapter)
+            db_apply_immobile_elements(conn, immobile_id, adapter)
 
-            contract_id = db_upsert_contract(conn, immobile_id, adapter)
+            # Generation owns only the persistable write-back surface. Run-only
+            # contract fields stay in the current adapter/document context.
+            contract_id = db_upsert_generation_contract(conn, immobile_id, adapter)
             contract_ctx = db_load_contract_context(conn, contract_id)
             return ContractSyncResult(contract_id=contract_id, contract_ctx=contract_ctx)
         except Exception as exc:
@@ -402,6 +459,49 @@ class ContractSyncService:
                     artifact_refs=[FailureArtifactRef.create("immobile_id", str(immobile_id))],
                 )
             raise
+
+    def _sync_locatore_root_fields(self, conn, adapter: ItemAdapter, client_cf: str) -> None:
+        """Apply root editable fields only; fetch/update logic still belongs to prepare."""
+        if not any(
+            adapter.get(field) is not None
+            for field in ("locatore_comune_res", "locatore_via", "locatore_civico")
+        ):
+            return
+
+        current_root = db_load_prepare_document_root(conn, client_cf)
+        current_comune = current_root.locatore_comune_res if current_root else None
+        current_via = current_root.locatore_via if current_root else None
+        current_civico = current_root.locatore_civico if current_root else None
+
+        merged_comune = resolve_patch_value(
+            adapter.get("locatore_comune_res"),
+            current_comune,
+            default=None,
+        )
+        merged_via = resolve_patch_value(
+            adapter.get("locatore_via"),
+            current_via,
+            default=None,
+        )
+        merged_civico = resolve_patch_value(
+            adapter.get("locatore_civico"),
+            current_civico,
+            default=None,
+        )
+
+        if merged_comune and merged_via:
+            address_id = db_upsert_address(
+                conn,
+                {
+                    "comune": merged_comune,
+                    "via_full": merged_via,
+                    "civico": merged_civico,
+                },
+            )
+        else:
+            address_id = None
+
+        db_update_person_residence_address(conn, client_cf, address_id)
 
 
 class CanoneStageService:
@@ -440,7 +540,9 @@ class CanoneStageService:
                 """Рахує кількість непорожніх element-flags у current contract context."""
                 return sum(1 for key in keys if str(elements.get(key, "") or "").strip() != "")
 
-            kind_raw = clean_str(adapter.get("contract_kind"))
+            kind_raw = clean_str(adapter.get("contract_kind")) or clean_str(
+                contract_ctx.get("contract", {}).get("contract_kind")
+            )
             kind_str = (kind_raw or "CONCORDATO").upper()
 
             kind_enum = ContractKind.CONCORDATO
@@ -472,14 +574,11 @@ class CanoneStageService:
                 final_istat = float(db_istat)
 
             yaml_durata = adapter.get("durata_anni")
-            db_durata = contract_ctx.get("contract", {}).get("durata_anni")
             final_durata = 3
             if str(yaml_durata).strip() == "-":
                 final_durata = 3
             elif yaml_durata is not None and str(yaml_durata).strip() != "":
                 final_durata = int(yaml_durata)
-            elif db_durata is not None:
-                final_durata = int(db_durata)
 
             yaml_arredato = adapter.get("arredato")
             db_arredato = contract_ctx.get("contract", {}).get("arredato_pct")
@@ -502,7 +601,7 @@ class CanoneStageService:
                 final_ignore = bool(db_ignore)
 
             can_in = CanoneInput(
-                superficie_catastale=float(imm.superficie_totale or adapter.get("superficie_totale") or 0),
+                superficie_catastale=float(imm.superficie_totale or 0),
                 micro_zona=clean_str(imm.micro_zona),
                 foglio=clean_str(imm.foglio),
                 categoria_catasto=clean_str(imm.categoria),

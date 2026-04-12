@@ -110,3 +110,30 @@ def build_contract_patch_decision(
         "ignore_surcharges": _resolve_ignore_surcharges(adapter.get("ignore_surcharges"), old_contract),
     }
     return ContractPatchDecision(params=params, kind_was_unknown=kind_was_unknown)
+
+
+def build_generation_contract_patch_decision(
+    immobile_id: int,
+    adapter: ItemAdapter,
+    old_contract: Mapping[str, Any],
+) -> ContractPatchDecision:
+    """Build the generation-only DB write-back for persistable contract fields."""
+    raw_kind = clean_str(adapter.get("contract_kind"))
+    old_kind = clean_str(old_contract.get("contract_kind"))
+
+    kind_was_unknown = False
+    if raw_kind:
+        new_kind, kind_was_unknown = _resolve_contract_kind(raw_kind)
+    elif old_kind:
+        new_kind, _ = _resolve_contract_kind(old_kind)
+    else:
+        new_kind = "CONCORDATO"
+
+    params = {
+        "immobile_id": immobile_id,
+        "kind": new_kind,
+        "istat": _resolve_istat(adapter.get("istat"), old_contract),
+        "arredato": _resolve_arredato(adapter.get("arredato"), old_contract),
+        "ignore_surcharges": _resolve_ignore_surcharges(adapter.get("ignore_surcharges"), old_contract),
+    }
+    return ContractPatchDecision(params=params, kind_was_unknown=kind_was_unknown)

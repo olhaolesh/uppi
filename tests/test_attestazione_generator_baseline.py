@@ -250,6 +250,17 @@ def test_attestazione_generator_partial_input_returns_current_blank_placeholders
     assert params["{{CAN_MENSILE}}"] == ""
 
 
+def test_attestazione_generator_does_not_use_db_canone_as_run_only_default():
+    """Blank run-only canone must stay blank instead of falling back to stored contract data."""
+    params = build_template_params(
+        ItemAdapter({"locatore_cf": "RSSMRA80A01H501Z"}),
+        _make_immobile(),
+        _make_contract_ctx(contract={"canone_contrattuale_mensile": 700}),
+    )
+
+    assert params["{{CAN_MENSILE}}"] == ""
+
+
 def test_attestazione_generator_known_current_behavior_ignore_surcharges_keeps_transitorio_text_but_excludes_it_from_var_range():
     """Перевіряє сценарій, описаний у назві тесту."""
     contract_ctx = {

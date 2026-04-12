@@ -295,7 +295,7 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
         except Exception:
             pass
 
-    agreed = adapter.get("canone_contrattuale_mensile") or contract.get("canone_contrattuale_mensile")
+    agreed = adapter.get("canone_contrattuale_mensile")
     if agreed is not None:
         params["{{CAN_MENSILE}}"] = _fmt_num(agreed, 2)
 

@@ -14,12 +14,13 @@ from uppi.config.app_config import VisuraProcessorRuntimeConfig
 from uppi.domain.calculation_strategy import CalculationStrategy
 from uppi.domain.db import get_pg_connection
 from uppi.domain.failure_registry import FailureStage
+from uppi.domain.exceptions import GenerationPrepareRequiredError
 from uppi.domain.immobile import Immobile
 from uppi.domain.object_storage import ObjectStorage
 from uppi.domain.storage import get_client_dir, get_visura_path
 from uppi.parsers.visura_pdf_parser import VisuraParser
 from uppi.services.db_repo import (
-    db_load_immobili,
+    db_load_immobile_by_identity,
 )
 from uppi.services.failure_registry import FailureRegistryRecorder, is_failure_reported
 from uppi.services.storage_minio import StorageService
@@ -33,7 +34,7 @@ from uppi.services.visura_stages import (
     VisuraIngestService,
 )
 from uppi.utils.audit import safe_unlink
-from uppi.utils.parse_utils import clean_str
+from uppi.utils.parse_utils import clean_str, clean_sub
 
 logger = logging.getLogger(__name__)
 
@@ -182,9 +183,49 @@ class VisuraProcessor:
         """Run the import-only boundary and stop after `ImmobileSync`."""
         return self._process_pipeline_item(item, spider, include_generation=False)
 
+    def process_generation_item(self, item, spider):
+        """Run the production generation boundary without touching import/browser logic."""
+        adapter = ItemAdapter(item)
+        run_id = self.failure_registry_recorder.resolve_run_id(adapter=adapter, spider=spider)
+        locatore_cf = clean_str(adapter.get("locatore_cf") or adapter.get("codice_fiscale"))
+
+        if not locatore_cf:
+            spider.logger.error("[PIPELINE] Missing locatore_cf for item: %r", item)
+            return item
+
+        conn = self.connection_factory()
+
+        try:
+            # `scrapy crawl uppi` is generation-only. Missing DB state must hard-fail
+            # with prepare guidance instead of falling back to the browser/import path.
+            self._run_generation_phase(
+                conn,
+                spider,
+                adapter,
+                run_id=run_id,
+                locatore_cf=locatore_cf,
+            )
+            conn.commit()
+            return item
+        except Exception as e:
+            if not is_failure_reported(e):
+                self.failure_registry_recorder.record_failure(
+                    run_id=run_id,
+                    client_cf=locatore_cf,
+                    stage=FailureStage.PIPELINE_FATAL,
+                    error=e,
+                )
+            spider.logger.exception("[PIPELINE] Fatal generation error for CF %s: %s", locatore_cf, e)
+            if conn:
+                conn.rollback()
+            return item
+        finally:
+            if conn:
+                conn.close()
+
     def process_item(self, item, spider):
-        """Повністю обробляє один item після етапу browser download."""
-        return self._process_pipeline_item(item, spider, include_generation=True)
+        """Backward-compatible alias for the current generation-only production boundary."""
+        return self.process_generation_item(item, spider)
 
     def _process_pipeline_item(self, item, spider, *, include_generation: bool):
         """Shared pipeline entry point with an explicit import/generation split."""
@@ -271,39 +312,71 @@ class VisuraProcessor:
         return visura_ingest
 
     def _run_generation_phase(self, conn, spider, adapter, *, run_id: str, locatore_cf: str) -> None:
-        """Continue past the import-only boundary into contract and document stages."""
-        immobili_db = db_load_immobili(conn, locatore_cf)
-        selected = filter_immobiles_by_yaml(immobili_db, adapter)
+        """Run generation after a strict DB identity match and without import fallback."""
+        foglio = clean_str(adapter.get("foglio"))
+        numero = clean_str(adapter.get("numero"))
+        sub = clean_sub(adapter.get("sub"))
 
-        for immobile_id, imm in selected:
-            contract_sync = self.contract_sync_service.sync(
-                conn,
-                adapter,
-                run_id=run_id,
-                client_cf=locatore_cf,
-                immobile_id=immobile_id,
+        if not foglio or not numero:
+            raise GenerationPrepareRequiredError(
+                (
+                    f"Generation requires FOGLIO and NUMERO for LOCATORE_CF={locatore_cf}. "
+                    f"Run `python -m uppi.cli.prepare_by_cf --cf {locatore_cf}` first."
+                ),
+                details={
+                    "locatore_cf": locatore_cf,
+                    "foglio": foglio,
+                    "numero": numero,
+                    "sub": sub,
+                },
             )
 
-            canone_stage = self.canone_stage_service.run(
-                conn,
-                spider,
-                adapter,
-                run_id=run_id,
-                locatore_cf=locatore_cf,
-                imm=imm,
-                contract_id=contract_sync.contract_id,
-                contract_ctx=contract_sync.contract_ctx,
+        matched = db_load_immobile_by_identity(conn, locatore_cf, foglio, numero, sub)
+        if matched is None:
+            raise GenerationPrepareRequiredError(
+                (
+                    f"Immobile not found in DB for LOCATORE_CF={locatore_cf}, "
+                    f"FOGLIO={foglio}, NUMERO={numero}, SUB={sub!r}. "
+                    f"Run `python -m uppi.cli.prepare_by_cf --cf {locatore_cf}` first."
+                ),
+                details={
+                    "locatore_cf": locatore_cf,
+                    "foglio": foglio,
+                    "numero": numero,
+                    "sub": sub,
+                },
             )
 
-            self.document_stage_service.run(
-                conn,
-                spider,
-                adapter,
-                run_id=run_id,
-                imm=imm,
-                contract_ctx=canone_stage.contract_ctx,
-                contract_id=contract_sync.contract_id,
-                immobile_id=immobile_id,
-                locatore_cf=locatore_cf,
-                canone_result_snapshot=canone_stage.canone_result_snapshot,
-            )
+        immobile_id, imm = matched
+        contract_sync = self.contract_sync_service.sync(
+            conn,
+            adapter,
+            run_id=run_id,
+            client_cf=locatore_cf,
+            immobile_id=immobile_id,
+            imm=imm,
+        )
+
+        canone_stage = self.canone_stage_service.run(
+            conn,
+            spider,
+            adapter,
+            run_id=run_id,
+            locatore_cf=locatore_cf,
+            imm=imm,
+            contract_id=contract_sync.contract_id,
+            contract_ctx=contract_sync.contract_ctx,
+        )
+
+        self.document_stage_service.run(
+            conn,
+            spider,
+            adapter,
+            run_id=run_id,
+            imm=imm,
+            contract_ctx=canone_stage.contract_ctx,
+            contract_id=contract_sync.contract_id,
+            immobile_id=immobile_id,
+            locatore_cf=locatore_cf,
+            canone_result_snapshot=canone_stage.canone_result_snapshot,
+        )

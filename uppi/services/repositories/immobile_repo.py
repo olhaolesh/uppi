@@ -128,11 +128,14 @@ def db_update_immobile_real_address(
     immobile_id: int,
     real_address_id: Optional[int] = None,
     energy_class: Optional[str] = None,
+    *,
+    clear_real_address: bool = False,
 ) -> None:
     """Оновлює real-address і `energy_class`, не змінюючи current patch semantics."""
     updates, params = build_real_address_update_plan(
         real_address_id=real_address_id,
         energy_class=energy_class,
+        clear_real_address=clear_real_address,
     )
 
     if not updates:
@@ -212,6 +215,74 @@ def db_load_immobili(conn, owner_cf: str) -> List[Tuple[int, Immobile]]:
         out.append((imm_id, imm_obj))
 
     return out
+
+
+def db_load_immobile_by_identity(
+    conn,
+    owner_cf: str,
+    foglio: str,
+    numero: str,
+    sub: str,
+) -> Tuple[int, Immobile] | None:
+    """Load exactly one immobile using the generation identity contract."""
+    sql = """
+    SELECT
+      i.id,
+      i.sez_urbana, i.foglio, i.numero, i.sub,
+      i.zona_cens, i.micro_zona, i.categoria, i.classe, i.consistenza, i.rendita,
+      i.superficie_totale, i.superficie_escluse, i.superficie_raw,
+      i.energy_class,
+      va.comune as v_comune, va.via_full as v_via, va.civico as v_civico,
+      va.piano as v_piano, va.interno as v_interno, va.scala as v_scala,
+      ra.comune as r_comune, ra.via_full as r_via, ra.civico as r_civico,
+      ra.piano as r_piano, ra.interno as r_interno
+    FROM public.immobili i
+    LEFT JOIN public.addresses va ON i.visura_address_id = va.id
+    LEFT JOIN public.addresses ra ON i.real_address_id = ra.id
+    WHERE i.owner_cf = %s
+      AND i.foglio = %s
+      AND i.numero = %s
+      AND COALESCE(i.sub, '') = %s
+    LIMIT 1;
+    """
+
+    with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(sql, (owner_cf, foglio, numero, sub))
+        row = cur.fetchone()
+
+    if row is None:
+        return None
+
+    d = dict(row)
+    imm_id = int(d.pop("id"))
+    imm_obj = Immobile(
+        sez_urbana=d["sez_urbana"],
+        foglio=d["foglio"],
+        numero=d["numero"],
+        sub=d["sub"],
+        zona_cens=d["zona_cens"],
+        micro_zona=d["micro_zona"],
+        categoria=d["categoria"],
+        classe=d["classe"],
+        consistenza=d["consistenza"],
+        rendita=d["rendita"],
+        superficie_totale=float(d["superficie_totale"]) if d["superficie_totale"] else None,
+        superficie_escluse=float(d["superficie_escluse"]) if d["superficie_escluse"] else None,
+        superficie_raw=d["superficie_raw"],
+        energy_class=d["energy_class"],
+        immobile_comune=d["v_comune"],
+        via_name=d["v_via"],
+        via_num=d["v_civico"],
+        piano=d["v_piano"],
+        interno=d["v_interno"],
+        scala=d["v_scala"],
+        immobile_comune_override=d["r_comune"],
+        immobile_via_override=d["r_via"],
+        immobile_civico_override=d["r_civico"],
+        immobile_piano_override=d["r_piano"],
+        immobile_interno_override=d["r_interno"],
+    )
+    return imm_id, imm_obj
 
 
 def db_prune_old_immobili_without_contracts(conn, owner_cf: str, keep_ids: List[int], enabled: bool) -> int:

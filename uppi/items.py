@@ -31,6 +31,7 @@ class UppiItem(scrapy.Item):
 
     # Кодіче фіскале локатора (обов'язкове поле, ключ клієнта)
     locatore_cf = scrapy.Field()
+    run_id = scrapy.Field()
 
     # Альтернативне імʼя, якщо десь ще використовується
     codice_fiscale = scrapy.Field()

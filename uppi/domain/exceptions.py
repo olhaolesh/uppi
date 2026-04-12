@@ -137,3 +137,27 @@ class PrepareOutputWriteError(PrepareModeError):
     """Raised when prepare cannot persist the generated `immobili.yml`."""
 
     code = "prepare_output_write_error"
+
+
+class ImportOnlyRunnerFailedError(NonRecoverableDomainError):
+    """Raised when the reusable import-only runner cannot complete successfully."""
+
+    code = "import_only_runner_failed"
+
+
+class BulkImportModeError(NonRecoverableDomainError):
+    """Base application-level error for bulk CSV import-only orchestration."""
+
+    code = "bulk_import_mode_error"
+
+
+class BulkImportCsvLoadError(BulkImportModeError):
+    """Raised when bulk mode cannot load or parse the requested CSV file."""
+
+    code = "bulk_import_csv_load_error"
+
+
+class GenerationPrepareRequiredError(NonRecoverableDomainError):
+    """Raised when generation cannot match a prepared immobile in DB state."""
+
+    code = "generation_prepare_required"

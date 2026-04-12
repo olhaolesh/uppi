@@ -15,6 +15,7 @@ from uppi.services.visura_stages import (
     PersonSyncResult,
     VisuraIngestResult,
 )
+from uppi.spiders.uppi_browser_spider import UppiSpider as UppiBrowserSpider
 from uppi.spiders.uppi_import_spider import UppiImportSpider
 from uppi.spiders.uppi_spider import UppiSpider
 
@@ -107,7 +108,7 @@ class RecordingContractSyncService:
     def __init__(self, calls: list[str]) -> None:
         self.calls = calls
 
-    def sync(self, conn, adapter, *, run_id, client_cf, immobile_id):
+    def sync(self, conn, adapter, *, run_id, client_cf, immobile_id, imm):
         self.calls.append("contract_sync")
         return ContractSyncResult(contract_id=91, contract_ctx={"contract": {"id": 91}})
 
@@ -205,14 +206,10 @@ def test_process_import_item_stops_after_immobile_sync(monkeypatch):
     conn = FakeConnection()
     calls: list[str] = []
 
-    def fail_db_load_immobili(conn, cf):
-        raise AssertionError("db_load_immobili must not run on the import-only boundary")
+    def fail_db_load_immobile_by_identity(conn, owner_cf, foglio, numero, sub):
+        raise AssertionError("db_load_immobile_by_identity must not run on the import-only boundary")
 
-    def fail_filter_immobiles_by_yaml(immobili, adapter):
-        raise AssertionError("filter_immobiles_by_yaml must not run on the import-only boundary")
-
-    monkeypatch.setattr(processor_module, "db_load_immobili", fail_db_load_immobili)
-    monkeypatch.setattr(processor_module, "filter_immobiles_by_yaml", fail_filter_immobiles_by_yaml)
+    monkeypatch.setattr(processor_module, "db_load_immobile_by_identity", fail_db_load_immobile_by_identity)
 
     processor = _make_processor(conn, recorder, calls=calls, generation_guards=True)
     item = {"run_id": "run-import-001", "locatore_cf": "RSSMRA80A01H501Z"}
@@ -228,37 +225,34 @@ def test_process_import_item_stops_after_immobile_sync(monkeypatch):
     assert storage.records == []
 
 
-def test_process_item_keeps_existing_generation_continuation(monkeypatch):
-    """The full processor path must still continue past the import boundary."""
+def test_process_generation_item_uses_strict_db_match_and_skips_import_boundary(monkeypatch):
+    """The production generation entry must match one immobile and skip import stages."""
     storage = RecordingFailureStorage()
     recorder = FailureRegistryRecorder(storage)
     conn = FakeConnection()
     calls: list[str] = []
 
-    def fake_db_load_immobili(conn, cf):
-        calls.append("db_load_immobili")
-        return [(71, Immobile(foglio="12", numero="345", sub="7"))]
+    def fake_db_load_immobile_by_identity(conn, owner_cf, foglio, numero, sub):
+        calls.append("db_load_immobile_by_identity")
+        assert (owner_cf, foglio, numero, sub) == ("RSSMRA80A01H501Z", "12", "345", "7")
+        return 71, Immobile(foglio="12", numero="345", sub="7")
 
-    def fake_filter_immobiles_by_yaml(immobili, adapter):
-        calls.append("filter_immobiles_by_yaml")
-        return immobili
-
-    monkeypatch.setattr(processor_module, "db_load_immobili", fake_db_load_immobili)
-    monkeypatch.setattr(processor_module, "filter_immobiles_by_yaml", fake_filter_immobiles_by_yaml)
-
+    monkeypatch.setattr(processor_module, "db_load_immobile_by_identity", fake_db_load_immobile_by_identity)
     processor = _make_processor(conn, recorder, calls=calls)
-    item = {"run_id": "run-full-001", "locatore_cf": "RSSMRA80A01H501Z"}
+    item = {
+        "run_id": "run-full-001",
+        "locatore_cf": "RSSMRA80A01H501Z",
+        "foglio": "12",
+        "numero": "345",
+        "sub": "7",
+    }
     spider = SimpleNamespace(logger=RecordingLogger())
 
-    returned = processor.process_item(item, spider)
+    returned = processor.process_generation_item(item, spider)
 
     assert returned is item
     assert calls == [
-        "person_sync",
-        "visura_ingest",
-        "immobile_sync",
-        "db_load_immobili",
-        "filter_immobiles_by_yaml",
+        "db_load_immobile_by_identity",
         "contract_sync",
         "canone_stage",
         "document_stage",
@@ -267,6 +261,40 @@ def test_process_item_keeps_existing_generation_continuation(monkeypatch):
     assert conn.rollback_called is False
     assert conn.close_called is True
     assert storage.records == []
+
+
+def test_process_generation_item_hard_fails_missing_db_match_with_prepare_guidance(monkeypatch):
+    """Missing DB state must not trigger import fallback on the generation boundary."""
+    storage = RecordingFailureStorage()
+    recorder = FailureRegistryRecorder(storage)
+    conn = FakeConnection()
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        processor_module,
+        "db_load_immobile_by_identity",
+        lambda conn, owner_cf, foglio, numero, sub: None,
+    )
+
+    processor = _make_processor(conn, recorder, calls=calls)
+    item = {
+        "run_id": "run-full-002",
+        "locatore_cf": "RSSMRA80A01H501Z",
+        "foglio": "12",
+        "numero": "345",
+        "sub": "7",
+    }
+    spider = SimpleNamespace(logger=RecordingLogger())
+
+    returned = processor.process_generation_item(item, spider)
+
+    assert returned is item
+    assert calls == []
+    assert conn.commit_called is False
+    assert conn.rollback_called is True
+    assert conn.close_called is True
+    assert len(storage.records) == 1
+    assert "prepare_by_cf --cf" in storage.records[0].message_redacted
 
 
 def test_import_pipeline_delegates_to_process_import_item(monkeypatch):
@@ -283,6 +311,9 @@ def test_import_pipeline_delegates_to_process_import_item(monkeypatch):
         def process_item(self, item, spider):
             raise AssertionError("full process_item must not be used by UppiImportPipeline")
 
+        def process_generation_item(self, item, spider):
+            raise AssertionError("generation boundary must not be used by UppiImportPipeline")
+
     monkeypatch.setattr(pipelines_module, "configure_uppi_logging", lambda: None)
     monkeypatch.setattr(pipelines_module, "VisuraProcessor", FakeProcessor)
 
@@ -294,8 +325,8 @@ def test_import_pipeline_delegates_to_process_import_item(monkeypatch):
     assert calls == ["process_import_item"]
 
 
-def test_default_pipeline_keeps_full_processor_entry_point(monkeypatch):
-    """The existing production pipeline must keep using the full processor path."""
+def test_default_pipeline_uses_generation_only_processor_entry_point(monkeypatch):
+    """The default production pipeline must use the generation-only entry point."""
     calls: list[str] = []
 
     class FakeProcessor:
@@ -305,8 +336,11 @@ def test_default_pipeline_keeps_full_processor_entry_point(monkeypatch):
             raise AssertionError("import boundary must not replace the default pipeline")
 
         def process_item(self, item, spider):
-            calls.append("process_item")
-            return {"result": "full-pipeline"}
+            raise AssertionError("legacy process_item must not be used by UppiPipeline")
+
+        def process_generation_item(self, item, spider):
+            calls.append("process_generation_item")
+            return {"result": "generation-only"}
 
     monkeypatch.setattr(pipelines_module, "configure_uppi_logging", lambda: None)
     monkeypatch.setattr(pipelines_module, "VisuraProcessor", FakeProcessor)
@@ -315,13 +349,14 @@ def test_default_pipeline_keeps_full_processor_entry_point(monkeypatch):
 
     returned = pipeline.process_item({"locatore_cf": "RSSMRA80A01H501Z"}, object())
 
-    assert returned == {"result": "full-pipeline"}
-    assert calls == ["process_item"]
+    assert returned == {"result": "generation-only"}
+    assert calls == ["process_generation_item"]
 
 
 def test_import_spider_uses_import_only_pipeline_boundary():
     """The internal import spider must reuse the browser flow with a different pipeline."""
-    assert issubclass(UppiImportSpider, UppiSpider)
+    assert issubclass(UppiImportSpider, UppiBrowserSpider)
+    assert not issubclass(UppiImportSpider, UppiSpider)
     assert UppiImportSpider.name == "uppi_import"
     assert UppiImportSpider.custom_settings == {
         "ITEM_PIPELINES": {

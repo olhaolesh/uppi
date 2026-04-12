@@ -30,3 +30,24 @@ def db_upsert_person(
             """,
             (cf, surname, name, address_id),
         )
+
+
+def db_update_person_residence_address(
+    conn,
+    cf: str,
+    address_id: Optional[int],
+) -> None:
+    """Replace the current residence address pointer, allowing explicit clears."""
+    if not cf:
+        return
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE public.persons
+            SET residence_address_id = %s,
+                updated_at = now()
+            WHERE cf = %s;
+            """,
+            (address_id, cf),
+        )

@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 
 from uppi.config.app_config import ClientsCsvSourceConfig
-from uppi.config.clients_csv import BulkClientCsvRow
+from uppi.config.clients_csv import BulkClientCsvInvalidRow, BulkClientCsvRow, BulkClientsCsvLoadResult
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,15 @@ def load_clients_csv(
     source_config: ClientsCsvSourceConfig | None = None,
 ) -> list[BulkClientCsvRow]:
     """Reads and normalizes `clients.csv` without attaching generation semantics."""
+    return list(load_clients_csv_with_issues(path=path, source_config=source_config).rows)
+
+
+def load_clients_csv_with_issues(
+    path: Path | None = None,
+    *,
+    source_config: ClientsCsvSourceConfig | None = None,
+) -> BulkClientsCsvLoadResult:
+    """Reads `clients.csv` and keeps invalid-row diagnostics for bulk orchestration."""
     resolved_source_config = source_config or default_clients_csv_source_config()
     resolved_path = Path(path) if path is not None else resolved_source_config.clients_file
 
@@ -38,13 +47,29 @@ def load_clients_csv(
     with resolved_path.open("r", encoding="utf-8", newline="") as file_obj:
         reader = csv.DictReader(file_obj)
         if reader.fieldnames is None:
-            return []
+            return BulkClientsCsvLoadResult(rows=(), invalid_rows=(), total_rows=0)
 
         rows: list[BulkClientCsvRow] = []
+        invalid_rows: list[BulkClientCsvInvalidRow] = []
+        total_rows = 0
         for row_number, raw_row in enumerate(reader, start=2):
-            row = BulkClientCsvRow.from_raw(raw_row, row_number=row_number)
-            if row is not None:
-                rows.append(row)
+            total_rows += 1
+            parsed = BulkClientCsvRow.parse_raw(raw_row, row_number=row_number)
+            if parsed is None:
+                continue
+            if isinstance(parsed, BulkClientCsvInvalidRow):
+                invalid_rows.append(parsed)
+                continue
+            rows.append(parsed)
 
-    logger.info("[CLIENTS_CSV] Loaded %d rows from %s", len(rows), resolved_path)
-    return rows
+    logger.info(
+        "[CLIENTS_CSV] Loaded %d valid rows and %d invalid rows from %s",
+        len(rows),
+        len(invalid_rows),
+        resolved_path,
+    )
+    return BulkClientsCsvLoadResult(
+        rows=tuple(rows),
+        invalid_rows=tuple(invalid_rows),
+        total_rows=total_rows,
+    )

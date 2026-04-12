@@ -1,4 +1,4 @@
-"""Launcher for the internal import-only spider used by prepare workflows."""
+"""Launcher for the internal import-only spider used by service-mode workflows."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Callable, ContextManager
 import yaml
 
 from uppi.config.app_config import project_root
-from uppi.domain.exceptions import PrepareImportFailedError
+from uppi.domain.exceptions import ImportOnlyRunnerFailedError
 
 
 def _default_temp_dir_factory() -> ContextManager[str]:
@@ -43,7 +43,7 @@ class ScrapyImportOnlyRunner:
 
         try:
             with self.temp_dir_factory() as temp_dir:
-                clients_path = Path(temp_dir) / "prepare-clients.yml"
+                clients_path = Path(temp_dir) / "import-clients.yml"
                 clients_path.write_text(
                     yaml.safe_dump(
                         [
@@ -68,10 +68,10 @@ class ScrapyImportOnlyRunner:
                     text=True,
                     capture_output=True,
                 )
-        except PrepareImportFailedError:
+        except ImportOnlyRunnerFailedError:
             raise
         except Exception as exc:
-            raise PrepareImportFailedError(
+            raise ImportOnlyRunnerFailedError(
                 f"Failed to launch import-only runner for LOCATORE_CF={normalized_cf}.",
                 details={
                     "locatore_cf": normalized_cf,
@@ -80,7 +80,7 @@ class ScrapyImportOnlyRunner:
             ) from exc
 
         if result.returncode != 0:
-            raise PrepareImportFailedError(
+            raise ImportOnlyRunnerFailedError(
                 f"Import-only runner failed for LOCATORE_CF={normalized_cf}.",
                 details={
                     "locatore_cf": normalized_cf,

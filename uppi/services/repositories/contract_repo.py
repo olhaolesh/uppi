@@ -8,7 +8,10 @@ from typing import Any, Dict
 import psycopg2.extras
 from itemadapter import ItemAdapter
 
-from uppi.services.policies.contract_patch_policy import build_contract_patch_decision
+from uppi.services.policies.contract_patch_policy import (
+    build_contract_patch_decision,
+    build_generation_contract_patch_decision,
+)
 from uppi.services.repositories.common import logger
 from uppi.utils.db_utils.key_normalize import normalize_element_key
 
@@ -76,6 +79,59 @@ def db_upsert_contract(conn, immobile_id: int, adapter: ItemAdapter) -> str:
             cur.execute(sql, {**params, "id": contract_id})
 
         return str(contract_id)
+
+
+def db_upsert_generation_contract(conn, immobile_id: int, adapter: ItemAdapter) -> str:
+    """Persist only the generation-approved contract fields and leave run-only state untouched."""
+    old_contract = {}
+    with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(
+            """
+            SELECT id,
+                   contract_kind,
+                   istat_rate,
+                   arredato_pct,
+                   ignore_surcharges
+            FROM public.contracts
+            WHERE immobile_id = %s
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (immobile_id,),
+        )
+        row = cur.fetchone()
+        if row:
+            old_contract = dict(row)
+
+    contract_id = old_contract.get("id")
+    decision = build_generation_contract_patch_decision(immobile_id, adapter, old_contract)
+    params = decision.params
+    if decision.kind_was_unknown:
+        logger.warning(f"[DB] Unknown contract kind '{adapter.get('contract_kind')}', defaulting to CONCORDATO")
+
+    with conn.cursor() as cur:
+        if not contract_id:
+            sql = """
+            INSERT INTO public.contracts (
+                immobile_id, contract_kind, istat_rate, arredato_pct, ignore_surcharges
+            ) VALUES (
+                %(immobile_id)s, %(kind)s, %(istat)s, %(arredato)s, %(ignore_surcharges)s
+            ) RETURNING id;
+            """
+            cur.execute(sql, params)
+            contract_id = cur.fetchone()[0]
+        else:
+            sql = """
+            UPDATE public.contracts SET
+                contract_kind = %(kind)s,
+                istat_rate = %(istat)s,
+                arredato_pct = %(arredato)s,
+                ignore_surcharges = %(ignore_surcharges)s,
+                updated_at = now()
+            WHERE id = %(id)s;
+            """
+            cur.execute(sql, {**params, "id": contract_id})
+
+    return str(contract_id)
 
 
 def db_load_contract_context(conn, contract_id: str) -> Dict[str, Any]:

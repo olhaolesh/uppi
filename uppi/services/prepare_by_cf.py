@@ -9,6 +9,7 @@ from typing import Any, Callable
 from uppi.config.app_config import AppConfig, project_root
 from uppi.domain.db import get_pg_connection
 from uppi.domain.exceptions import (
+    ImportOnlyRunnerFailedError,
     ImmobiliDocumentNotFoundError,
     PrepareGenerationFailedError,
     PrepareImportFailedError,
@@ -148,8 +149,11 @@ class PrepareByCfService:
         """Enter the import-only path and propagate explicit prepare-level failures."""
         try:
             self.import_runner.run_for_cf(locatore_cf, force_update_visura=True)
-        except PrepareImportFailedError:
-            raise
+        except ImportOnlyRunnerFailedError as exc:
+            raise PrepareImportFailedError(
+                f"Prepare could not refresh visura for LOCATORE_CF={locatore_cf}.",
+                details={"locatore_cf": locatore_cf},
+            ) from exc
         except Exception as exc:
             raise PrepareImportFailedError(
                 f"Prepare could not refresh visura for LOCATORE_CF={locatore_cf}.",

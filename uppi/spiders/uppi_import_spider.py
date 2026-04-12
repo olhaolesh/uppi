@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uppi.spiders.uppi_spider import UppiSpider
+from uppi.spiders.uppi_browser_spider import UppiSpider
 
 
 class UppiImportSpider(UppiSpider):

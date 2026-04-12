@@ -22,10 +22,12 @@ from uppi.domain.immobile import Immobile
 from uppi.services.db_repo import (
     db_apply_immobile_elements,
     db_insert_canone_calc,
+    db_load_immobile_by_identity,
     db_load_contract_context,
     db_load_immobili,
     db_update_immobile_real_address,
     db_upsert_address,
+    db_upsert_generation_contract,
     db_upsert_contract,
     db_upsert_immobile,
     db_upsert_immobile_elements,
@@ -382,6 +384,34 @@ def test_immobile_repo_contracts_persist_and_load_current_joined_shape_on_temp_p
     assert imm.immobile_interno_override == "4"
 
 
+def test_db_load_immobile_by_identity_uses_strict_generation_key_on_temp_postgres(pg_conn):
+    """Generation matching should be deterministic on owner CF plus cadastral identity."""
+    owner_cf, _ = _seed_owner(pg_conn)
+    visura_addr_id = db_upsert_address(
+        pg_conn,
+        {"comune": "Pescara", "via_full": "Corso Vittorio", "civico": "12"},
+    )
+    immobile_id = db_upsert_immobile(
+        pg_conn,
+        owner_cf,
+        _make_immobile(sub=""),
+        visura_addr_id=visura_addr_id,
+        source_visura_id=None,
+    )
+    pg_conn.commit()
+
+    matched = db_load_immobile_by_identity(pg_conn, owner_cf, "12", "345", "")
+    missing = db_load_immobile_by_identity(pg_conn, owner_cf, "12", "345", "7")
+
+    assert matched is not None
+    matched_id, matched_imm = matched
+    assert matched_id == immobile_id
+    assert matched_imm.foglio == "12"
+    assert matched_imm.numero == "345"
+    assert matched_imm.sub == ""
+    assert missing is None
+
+
 def test_known_current_behavior_element_persistence_uses_two_code_shapes_on_temp_postgres(pg_conn):
     """Перевіряє сценарій, описаний у назві тесту."""
     owner_cf, _ = _seed_owner(pg_conn)
@@ -476,6 +506,98 @@ def test_db_upsert_contract_persists_current_fields_on_temp_postgres(pg_conn):
     assert float(row["istat_rate"]) == 5.0
     assert float(row["arredato_pct"]) == 0.1
     assert row["ignore_surcharges"] is True
+
+
+def test_db_upsert_generation_contract_persists_only_allowlisted_fields_on_temp_postgres(pg_conn):
+    """Generation write-back must not promote run-only fields into master DB defaults."""
+    owner_cf, _ = _seed_owner(pg_conn)
+    cond_addr_id = db_upsert_address(
+        pg_conn,
+        {"comune": "Pescara", "via_full": "Via Test", "civico": "20"},
+    )
+    db_upsert_person(pg_conn, "BNCMRA80A01H501Z", surname="Bianchi", name="Mario", address_id=cond_addr_id)
+    immobile_id = db_upsert_immobile(pg_conn, owner_cf, _make_immobile(sub=""))
+
+    contract_id = db_upsert_contract(
+        pg_conn,
+        immobile_id,
+        ItemAdapter(
+            {
+                "conduttore_cf": "BNCMRA80A01H501Z",
+                "contract_kind": "TRANSITORIO",
+                "contratto_data": "01/01/2025",
+                "decorrenza_data": "01/02/2025",
+                "registrazione_data": "05/02/2025",
+                "registrazione_num": "REG-123",
+                "agenzia_entrate_sede": "PESCARA",
+                "canone_contrattuale_mensile": "650",
+                "istat": 5,
+                "arredato": "0.10",
+                "durata_anni": "4",
+                "ignore_surcharges": "yes",
+            }
+        ),
+    )
+    pg_conn.commit()
+
+    returned_id = db_upsert_generation_contract(
+        pg_conn,
+        immobile_id,
+        ItemAdapter(
+            {
+                "conduttore_cf": "VRDLGI80A01H501Z",
+                "contract_kind": "STUDENTI",
+                "contratto_data": "09/09/2026",
+                "decorrenza_data": "10/10/2026",
+                "registrazione_data": "11/10/2026",
+                "registrazione_num": "REG-999",
+                "agenzia_entrate_sede": "CHIETI",
+                "canone_contrattuale_mensile": "999",
+                "istat": "2.5",
+                "arredato": "0.25",
+                "durata_anni": "8",
+                "ignore_surcharges": "no",
+            }
+        ),
+    )
+    pg_conn.commit()
+
+    row = _fetchone_dict(
+        pg_conn,
+        """
+        SELECT
+            id,
+            conduttore_cf,
+            contract_kind,
+            start_date,
+            durata_anni,
+            decorrenza_data,
+            registrazione_data,
+            registrazione_num,
+            agenzia_entrate_sede,
+            canone_contrattuale_mensile,
+            istat_rate,
+            arredato_pct,
+            ignore_surcharges
+        FROM public.contracts
+        WHERE id = %s;
+        """,
+        (returned_id,),
+    )
+
+    assert returned_id == contract_id
+    assert row["conduttore_cf"] == "BNCMRA80A01H501Z"
+    assert row["contract_kind"] == "STUDENTI"
+    assert str(row["start_date"]) == "2025-01-01"
+    assert row["durata_anni"] == 4
+    assert str(row["decorrenza_data"]) == "2025-02-01"
+    assert str(row["registrazione_data"]) == "2025-02-05"
+    assert row["registrazione_num"] == "REG-123"
+    assert row["agenzia_entrate_sede"] == "PESCARA"
+    assert float(row["canone_contrattuale_mensile"]) == 650.0
+    assert float(row["istat_rate"]) == 2.5
+    assert float(row["arredato_pct"]) == 0.25
+    assert row["ignore_surcharges"] is False
 
 
 def test_db_load_contract_context_returns_current_joined_shape_on_temp_postgres(pg_conn):

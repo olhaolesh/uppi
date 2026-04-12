@@ -9,7 +9,7 @@ from uppi.services.visura_processor import VisuraProcessor
 
 class UppiPipeline:
     """
-    Minimal glue: delegate item processing to VisuraProcessor service.
+    Minimal glue: delegate generation-only items to VisuraProcessor service.
     """
 
     def __init__(self):
@@ -18,8 +18,8 @@ class UppiPipeline:
         self.processor = VisuraProcessor()
 
     def process_item(self, item, spider):
-        """Передає item у сервіс без додаткової логіки в самому pipeline."""
-        return self.processor.process_item(item, spider)
+        """Передає item у generation-only boundary без import/browser continuation."""
+        return self.processor.process_generation_item(item, spider)
 
 
 class UppiImportPipeline:

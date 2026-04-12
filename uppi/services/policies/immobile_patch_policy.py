@@ -70,6 +70,8 @@ def iter_apply_element_mutations(
 def build_real_address_update_plan(
     real_address_id: Optional[int] = None,
     energy_class: Optional[str] = None,
+    *,
+    clear_real_address: bool = False,
 ) -> Tuple[List[str], List[Any]]:
     """Будує current SQL update-plan для real address і `energy_class`.
 
@@ -80,7 +82,9 @@ def build_real_address_update_plan(
     updates: List[str] = []
     params: List[Any] = []
 
-    if real_address_id is not None:
+    if clear_real_address:
+        updates.append("real_address_id = NULL")
+    elif real_address_id is not None:
         updates.append("real_address_id = %s")
         params.append(real_address_id)
 

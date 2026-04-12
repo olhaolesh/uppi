@@ -255,23 +255,36 @@ def test_immobile_sync_service_preserves_current_parse_person_and_prune_order(mo
 
 
 def test_contract_sync_service_preserves_current_real_address_elements_contract_chain(monkeypatch):
-    """Перевіряє сценарій, описаний у назві тесту."""
+    """Generation contract sync should write only persistable DB fields before reload."""
     calls: list[tuple] = []
 
     def fake_upsert_address(conn, payload):
-        """Фіксує current real-address upsert."""
+        """Фіксує owner/real-address upsert."""
         calls.append(("address", payload["comune"], payload["via_full"], payload["civico"]))
-        return 51
+        return 50 + len([call for call in calls if call[0] == "address"])
 
-    def fake_update_real_address(conn, immobile_id, *, real_address_id, energy_class):
+    def fake_load_prepare_document_root(conn, owner_cf):
+        """Повертає поточний DB root state для merge-before-writeback."""
+        calls.append(("load_root", owner_cf))
+        return SimpleNamespace(
+            locatore_comune_res="Pescara",
+            locatore_via="Via Roma",
+            locatore_civico="10",
+        )
+
+    def fake_update_person_residence_address(conn, cf, address_id):
+        """Фіксує explicit root-level write-back."""
+        calls.append(("update_person_residence", cf, address_id))
+
+    def fake_update_real_address(conn, immobile_id, *, real_address_id, energy_class, clear_real_address):
         """Фіксує current real-address update semantics."""
-        calls.append(("update_real_address", immobile_id, real_address_id, energy_class))
+        calls.append(("update_real_address", immobile_id, real_address_id, energy_class, clear_real_address))
 
-    def fake_upsert_elements(conn, immobile_id, adapter):
+    def fake_apply_elements(conn, immobile_id, adapter):
         """Фіксує current immobile-elements upsert call."""
         calls.append(("elements", immobile_id))
 
-    def fake_upsert_contract(conn, immobile_id, adapter):
+    def fake_upsert_generation_contract(conn, immobile_id, adapter):
         """Фіксує current contract upsert call."""
         calls.append(("contract", immobile_id))
         return 61
@@ -282,13 +295,18 @@ def test_contract_sync_service_preserves_current_real_address_elements_contract_
         return {"contract": {"id": contract_id}}
 
     monkeypatch.setattr(stage_module, "db_upsert_address", fake_upsert_address)
+    monkeypatch.setattr(stage_module, "db_load_prepare_document_root", fake_load_prepare_document_root)
+    monkeypatch.setattr(stage_module, "db_update_person_residence_address", fake_update_person_residence_address)
     monkeypatch.setattr(stage_module, "db_update_immobile_real_address", fake_update_real_address)
-    monkeypatch.setattr(stage_module, "db_upsert_immobile_elements", fake_upsert_elements)
-    monkeypatch.setattr(stage_module, "db_upsert_contract", fake_upsert_contract)
+    monkeypatch.setattr(stage_module, "db_apply_immobile_elements", fake_apply_elements)
+    monkeypatch.setattr(stage_module, "db_upsert_generation_contract", fake_upsert_generation_contract)
     monkeypatch.setattr(stage_module, "db_load_contract_context", fake_load_contract_context)
 
     adapter = ItemAdapter(
         {
+            "locatore_comune_res": "Chieti",
+            "locatore_via": "Via Nuova",
+            "locatore_civico": "11",
             "immobile_comune": "Pescara",
             "immobile_via": "Corso Roma",
             "immobile_civico": "12",
@@ -304,13 +322,23 @@ def test_contract_sync_service_preserves_current_real_address_elements_contract_
         run_id="run-1",
         client_cf="RSSMRA80A01H501Z",
         immobile_id=71,
+        imm=Immobile(
+            immobile_comune_override="Pescara",
+            immobile_via_override="Via Old",
+            immobile_civico_override="9",
+            immobile_piano_override="1",
+            immobile_interno_override="2",
+        ),
     )
 
     assert result.contract_id == 61
     assert result.contract_ctx == {"contract": {"id": 61}}
     assert calls == [
+        ("load_root", "RSSMRA80A01H501Z"),
+        ("address", "Chieti", "Via Nuova", "11"),
+        ("update_person_residence", "RSSMRA80A01H501Z", 51),
         ("address", "Pescara", "Corso Roma", "12"),
-        ("update_real_address", 71, 51, "B"),
+        ("update_real_address", 71, 52, "B", False),
         ("elements", 71),
         ("contract", 71),
         ("context", 61),
@@ -386,6 +414,51 @@ def test_canone_stage_service_preserves_current_insert_then_reload_contract_cont
         ("insert_calc", 81, "pescara2018_base", 650.0, 4),
         ("reload_context", 81),
     ]
+
+
+def test_canone_stage_service_uses_db_for_persistable_fields_but_not_for_run_only_defaults(monkeypatch):
+    """Blank run-only fields must stay run-scoped while persistable fields can still fall back to DB."""
+    calls: list[tuple] = []
+
+    class RecordingStrategy:
+        code = "pescara2018_base"
+
+        def calculate(self, can_in):
+            calls.append(("compute", can_in.contract_kind.name, can_in.energy_class, can_in.durata_anni))
+            return SimpleNamespace(canone_finale_mensile=550.0)
+
+    monkeypatch.setattr(stage_module, "db_insert_canone_calc", lambda *args, **kwargs: None)
+    monkeypatch.setattr(stage_module, "db_load_contract_context", lambda conn, contract_id: {"contract": {"id": contract_id}})
+
+    stage = CanoneStageService(calculation_strategy=RecordingStrategy())
+    stage.run(
+        object(),
+        SimpleNamespace(logger=RecordingLogger()),
+        ItemAdapter({}),
+        run_id="run-2",
+        locatore_cf="RSSMRA80A01H501Z",
+        imm=Immobile(
+            superficie_totale=80.0,
+            micro_zona="1",
+            foglio="12",
+            categoria="A/2",
+            classe="3",
+        ),
+        contract_id=91,
+        contract_ctx={
+            "elements": {},
+            "contract": {
+                "contract_kind": "STUDENTI",
+                "durata_anni": 6,
+                "istat_rate": 2.5,
+                "arredato_pct": 0.2,
+                "ignore_surcharges": True,
+            },
+            "immobile": {"energy_class": "B"},
+        },
+    )
+
+    assert calls == [("compute", "STUDENTI", "B", 3)]
 
 
 def test_document_stage_service_preserves_current_generate_upload_audit_order(monkeypatch, tmp_path):

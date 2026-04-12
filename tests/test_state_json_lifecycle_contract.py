@@ -9,7 +9,7 @@ from pathlib import Path
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 import uppi.settings as settings_module
-import uppi.spiders.uppi_spider as spider_module
+import uppi.spiders.uppi_browser_spider as spider_module
 from uppi.ae.auth import authenticate_user
 from uppi.ae.uppi_selectors import UppiSelectors
 from uppi.config.workspace import (

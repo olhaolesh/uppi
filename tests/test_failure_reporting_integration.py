@@ -116,7 +116,7 @@ class NoopImmobileSyncService:
 class NoopContractSyncService:
     """Імітує успішний contract sync."""
 
-    def sync(self, conn, adapter, *, run_id, client_cf, immobile_id):
+    def sync(self, conn, adapter, *, run_id, client_cf, immobile_id, imm):
         """Повертає мінімальний contract context."""
         return ContractSyncResult(contract_id=81, contract_ctx={"contract": {"id": 81}})
 
@@ -152,7 +152,11 @@ class NoopDocumentStageService:
 
 def _make_processor(monkeypatch, recorder, connection, **overrides):
     """Створює `VisuraProcessor` з injected seams для вузьких integration tests."""
-    monkeypatch.setattr(processor_module, "db_load_immobili", lambda conn, cf: [])
+    monkeypatch.setattr(
+        processor_module,
+        "db_load_immobile_by_identity",
+        lambda conn, owner_cf, foglio, numero, sub: (71, Immobile(foglio=foglio, numero=numero, sub=sub)),
+    )
     return VisuraProcessor(
         connection_factory=lambda: connection,
         failure_registry_recorder=recorder,
@@ -186,7 +190,7 @@ def test_processor_records_stage_failure_for_person_sync_without_pipeline_duplic
     item = {"run_id": "run-001", "locatore_cf": "RSSMRA80A01H501Z"}
     spider = SimpleNamespace(logger=RecordingLogger())
 
-    returned = processor.process_item(item, spider)
+    returned = processor.process_import_item(item, spider)
 
     assert returned is item
     assert conn.rollback_called is True
@@ -207,14 +211,20 @@ def test_processor_records_pipeline_fatal_for_non_stage_failure(monkeypatch):
     processor = _make_processor(monkeypatch, recorder, conn)
     monkeypatch.setattr(
         processor_module,
-        "db_load_immobili",
-        lambda conn, cf: (_ for _ in ()).throw(RuntimeError("session=abc load failed")),
+        "db_load_immobile_by_identity",
+        lambda conn, owner_cf, foglio, numero, sub: (_ for _ in ()).throw(RuntimeError("session=abc load failed")),
     )
 
-    item = {"run_id": "run-002", "locatore_cf": "RSSMRA80A01H501Z"}
+    item = {
+        "run_id": "run-002",
+        "locatore_cf": "RSSMRA80A01H501Z",
+        "foglio": "12",
+        "numero": "345",
+        "sub": "7",
+    }
     spider = SimpleNamespace(logger=RecordingLogger())
 
-    returned = processor.process_item(item, spider)
+    returned = processor.process_generation_item(item, spider)
 
     assert returned is item
     assert conn.rollback_called is True
@@ -231,10 +241,16 @@ def test_processor_success_path_does_not_create_failure_records(monkeypatch):
     conn = FakeConnection()
     processor = _make_processor(monkeypatch, recorder, conn)
 
-    item = {"run_id": "run-003", "locatore_cf": "RSSMRA80A01H501Z"}
+    item = {
+        "run_id": "run-003",
+        "locatore_cf": "RSSMRA80A01H501Z",
+        "foglio": "12",
+        "numero": "345",
+        "sub": "7",
+    }
     spider = SimpleNamespace(logger=RecordingLogger())
 
-    returned = processor.process_item(item, spider)
+    returned = processor.process_generation_item(item, spider)
 
     assert returned is item
     assert conn.commit_called is True
