@@ -29,3 +29,5 @@ output/
 # Ignore Repomix files
 repomix.config.json
 repomix-output.md
+
+/logs/
