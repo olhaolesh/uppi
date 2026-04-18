@@ -1,135 +1,217 @@
 # UPPI
 
-UPPI працює у трьох окремих режимах:
+UPPI працює у **трьох окремих режимах**. Важливо розуміти їхню роль:
 
-- `prepare-by-CF`: вирішує, чи потрібен fetch/update, за потреби reuse-ить import-only browser path і генерує один single-client `immobili.yml`
-- `bulk-import-by-clients-csv`: масово проходить import-only path по списку CF і оновлює БД без generation
-- `scrapy crawl uppi`: generation-only command, який читає вже prepared `immobili.yml` і не ходить у SISTER
+1. **Підготовка одного клієнта (`prepare-by-CF`)**
+   Цей режим перевіряє, чи вже є достатньо даних у базі для конкретного клієнта.
+   Якщо даних не вистачає, система спочатку оновлює їх через імпорт з SISTER, а потім створює файл `immobili.yml` для цього клієнта.
 
-Canonical behavioral contract зафіксований у
-[docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md).
-Повна карта актуальної документації зібрана в
-[docs/README.md](docs/README.md).
+2. **Генерація документів (`scrapy crawl uppi`)**
+   Цей режим читає вже підготовлений в кроці `prepare-by-CF` файл `immobili.yml` і запускає генерацію документа Atestazione.
+   Він **не** ходить у SISTER і **не** підтягує дані самостійно.
+   Якщо потрібного об’єкта немає в базі, команда зупиниться з підказкою спочатку запустити підготовку описану в кроці `prepare-by-CF`.
 
-## What Changed
+3. **Масове оновлення (наповнення) бази з CSV (`bulk-import-by-clients-csv`)**
+   Цей режим проходить по списку клієнтів із переданого CSV-файлу імпортує дані з SISTER та оновлює/додає в базу.
+   Він **не** створює `immobili.yml` і **не** запускає генерацію документів Atestazione.
 
-- `immobili.yml` тепер є canonical generation input і описує рівно одного клієнта у форматі `root fields + immobili: [...]`
-- `prepare-by-CF` став єдиним owner-ом fetch/update decision logic
-- `clients.csv` винесено в окремий bulk import-only mode
-- `scrapy crawl uppi` більше не є smart fetch/import runner
-- generation не має hidden fallback у SISTER: missing DB immobile дає hard fail з підказкою спочатку запустити prepare
-- field-level validation і `"-"` semantics централізовані для нового single-client contract
 
-## Primary Commands
 
-Prepare one client and write `immobili.yml`:
+Основні правила роботи системи зафіксовані в документі
+[docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md)
+
+Загальна карта документації зібрана тут:
+[docs/README.md](docs/README.md)
+
+## Що змінилося
+
+* `immobili.yml` тепер є **основним файлом для генерації**
+* один файл `immobili.yml` описує **одного клієнта**
+* підготовка даних клієнта винесена в окремий режим `prepare-by-CF`
+* масове оновлення/наповнення клієнтів в базі даних через `clients.csv` працює окремо від генерації
+* команда `scrapy crawl uppi` тепер відповідає **лише за генерацію** Atestazione
+* якщо потрібного об’єкта немає в базі, генерація не намагається автоматично сходити в SISTER, а просить спочатку виконати підготовку режим `prepare-by-CF`
+* правила перевірки YAML і поведінка `"-"` для очищення полів тепер описані окремо й працюють однаково по всій системі
+
+## Основні команди
+
+### 1. Підготувати дані для одного клієнта
 
 ```bash
-venv/bin/python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z
+python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z
 ```
 
-Force visura refresh before generating YAML:
+Що робить ця команда:
+
+* перевіряє, чи є в базі потрібні дані по клієнту
+* якщо даних не вистачає, виконує імпорт з SISTER
+* після цього створює файл `immobili.yml` з даними по всіх об'єктах нерухомості клієнта
+
+### 2. Примусово оновити visura і заново згенерувати YAML
 
 ```bash
-venv/bin/python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z --force-update-visura
+python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z --force-update-visura
 ```
 
-Bulk import-only from `clients.csv`:
+Це потрібно тоді, коли дані в базі вже є, але ти хочеш примусово оновити їх (наприклад якщо VISURA клієнта змінилася) перед створенням нового `immobili.yml`.
+
+### 3. Масово оновити/наповнити базу клієнтами вказаними в CSV
 
 ```bash
-venv/bin/python -m uppi.cli.bulk_import_clients_csv --csv clients/clients.csv
+python -m uppi.cli.bulk_import_clients_csv --csv clients/clients.csv
 ```
 
-Generation-only run from prepared YAML:
+Що робить ця команда:
+
+* читає список клієнтів із CSV
+* для кожного клієнта запускає лише оновлення/наповнення даних у базі інформацією з SISTER
+* **не** створює `immobili.yml`
+* **не** запускає генерацію документів Attestazione
+
+### 4. Запустити генерацію з уже підготовленого YAML
 
 ```bash
 scrapy crawl uppi
 ```
 
-## Recommended Workflow
+Що робить ця команда:
 
-For one client:
+* читає підготовлений файл `immobili.yml` з даними про нерухомість одного клієнта
+* бере тільки активні записи там де enable: True
+* запускає розрахунок і генерацію документів Attestazione для кожного активного об'єкту нерухомості
 
-1. Run `prepare-by-CF`.
-2. Review and edit the generated `immobili.yml`.
-3. Set `enabled: false` on any immobile you want to skip.
-4. Use `"-"` only on fields documented as clear-allowed.
-5. Run `scrapy crawl uppi`.
+Що вона **не** робить:
 
-For many clients:
+* не оновлює дані з SISTER
+* не виконує імпорт
+* не приймає рішення, чи достатньо даних у базі
 
-1. Run bulk CSV import-only mode to refresh DB state for all target CFs.
-2. For each client that needs generation, run `prepare-by-CF`.
-3. Review the generated YAML and then run `scrapy crawl uppi`.
+## Як правильно працювати з системою
 
-Recommended operator guide:
-[docs/operator_workflow.md](docs/operator_workflow.md).
+### Варіант 1. Потрібно згенерувати документи для одного клієнта
 
-## Documentation Map
+1. Запусти підготовку:
 
-Canonical doc index:
+   ```bash
+   python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z
+   ```
 
-- [docs/README.md](docs/README.md)
+2. Відкрий згенерований файл `immobili.yml`.
 
-Canonical contract and operator docs:
+3. Перевір дані та, за потреби, відредагуй їх.
 
-- [docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md)
-- [docs/operator_workflow.md](docs/operator_workflow.md)
-- [docs/validation_clear_policy_matrix.md](docs/validation_clear_policy_matrix.md)
+4. Якщо якийсь об’єкт не треба обробляти, постав:
 
-Runtime and architecture:
+   ```yaml
+   enabled: false
+   ```
 
-- [docs/runtime_flow.md](docs/runtime_flow.md)
-- [docs/current_architecture.md](docs/current_architecture.md)
-- [docs/local_development_and_testing.md](docs/local_development_and_testing.md)
+5. Якщо треба очистити значення, використовуй `"-"` **тільки для тих полів, де це дозволено**.
 
-Testing, smoke, rollout:
+6. Запусти генерацію:
 
-- [docs/regression_test_map.md](docs/regression_test_map.md)
-- [docs/rollout_ready_checklist.md](docs/rollout_ready_checklist.md)
-- [docs/live_smoke_strategy_ae_sister.md](docs/live_smoke_strategy_ae_sister.md)
+   ```bash
+   scrapy crawl uppi
+   ```
 
-Protected invariants and reference docs:
+### Варіант 2. Потрібно спочатку масово оновити/наповнити базу з SISTER
 
-- [docs/refactor_protected_invariants.md](docs/refactor_protected_invariants.md)
-- [docs/state_json_lifecycle_contract.md](docs/state_json_lifecycle_contract.md)
-- [docs/document_generation.md](docs/document_generation.md)
-- [docs/failure_registry_contract.md](docs/failure_registry_contract.md)
+1. Запусти масове оновлення:
 
-Historical archive:
+   ```bash
+   python -m uppi.cli.bulk_import_clients_csv --csv clients/clients.csv
+   ```
 
-- [docs/archive/README.md](docs/archive/README.md)
+2. Для кожного клієнта, для якого потрібна генерація, окремо виконай:
 
-## Configuration Surface
+   ```bash
+   python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z
+   ```
 
-Canonical generation input:
+3. Перевір і відредагуй `immobili.yml`.
 
-- `UPPI_IMMOBILI_YAML`
+4. Запусти:
 
-Bulk CSV input:
+   ```bash
+   scrapy crawl uppi
+   ```
 
-- `UPPI_CLIENTS_CSV`
+Детальний покроковий опис для оператора:
+[docs/operator_workflow.md](docs/operator_workflow.md)
 
-Legacy compatibility only:
+## Які документи читати
 
-- `UPPI_CLIENTS_YAML`
-  This remains only as a transitional/internal source for the protected import spider path and is not the canonical generation contract.
+### Основні документи
 
-## Testing
+* [docs/README.md](docs/README.md)
+* [docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md)
+* [docs/operator_workflow.md](docs/operator_workflow.md)
+* [docs/validation_clear_policy_matrix.md](docs/validation_clear_policy_matrix.md)
 
-Focused regression guidance lives in
-[docs/regression_test_map.md](docs/regression_test_map.md).
+### Як улаштована система
 
-Default full test command:
+* [docs/runtime_flow.md](docs/runtime_flow.md)
+* [docs/current_architecture.md](docs/current_architecture.md)
+* [docs/local_development_and_testing.md](docs/local_development_and_testing.md)
+
+### Тести, перевірки, запуск перед релізом
+
+* [docs/regression_test_map.md](docs/regression_test_map.md)
+* [docs/rollout_ready_checklist.md](docs/rollout_ready_checklist.md)
+* [docs/live_smoke_strategy_ae_sister.md](docs/live_smoke_strategy_ae_sister.md)
+
+### Довідкові технічні документи
+
+* [docs/refactor_protected_invariants.md](docs/refactor_protected_invariants.md)
+* [docs/state_json_lifecycle_contract.md](docs/state_json_lifecycle_contract.md)
+* [docs/document_generation.md](docs/document_generation.md)
+* [docs/failure_registry_contract.md](docs/failure_registry_contract.md)
+
+### Архів старих документів
+
+* [docs/archive/README.md](docs/archive/README.md)
+
+## Налаштування через змінні середовища
+
+### Основний YAML для генерації
+
+* `UPPI_IMMOBILI_YAML`
+
+Ця змінна вказує, який саме файл `immobili.yml` брати для генерації.
+
+### CSV для масового оновлення
+
+* `UPPI_CLIENTS_CSV`
+
+Ця змінна вказує шлях до CSV-файлу для масового імпорту.
+
+### Стара сумісність
+
+* `UPPI_CLIENTS_YAML`
+
+Це старий механізм сумісності.
+Він більше **не є основним способом** запуску генерації і залишений лише для внутрішніх або перехідних частин захищеного шляху імпорту.
+
+## Тестування
+
+Карта тестів і рекомендації щодо запуску:
+[docs/regression_test_map.md](docs/regression_test_map.md)
+
+Повний запуск тестів:
 
 ```bash
-venv/bin/python -m pytest -q
+python -m pytest -q
 ```
 
-Rollout pre-flight and smoke checklist:
-[docs/rollout_ready_checklist.md](docs/rollout_ready_checklist.md).
+Перевірки перед використанням у роботі:
+[docs/rollout_ready_checklist.md](docs/rollout_ready_checklist.md)
 
-## Live Smoke
+## Жива перевірка AE/SISTER
 
-Live AE/SISTER smoke is only required when a change touches the protected browser/import reuse path or `state.json` lifecycle. The canonical checklist is
-[docs/live_smoke_strategy_ae_sister.md](docs/live_smoke_strategy_ae_sister.md).
+Живу перевірку AE/SISTER потрібно робити лише тоді, коли зміни зачіпають:
+
+* захищений браузерний шлях імпорту
+* повторне використання browser/import логіки
+* життєвий цикл `state.json`
+
+Актуальний чекліст для такої перевірки:

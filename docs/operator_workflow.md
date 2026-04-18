@@ -1,280 +1,437 @@
 # Operator Workflow
 
-Цей документ є practical runbook для оператора або junior-розробника. Якщо треба
-зрозуміти, що запускати і в якій послідовності, починати треба звідси, а не з
-коду.
+Цей документ пояснює, **що саме запускати, у якій послідовності і для чого**.
+Його варто читати оператору або junior-розробнику перед роботою з UPPI.
 
-Нормативний behavioral contract зафіксований у
-[./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md).
-Policy matrix для `"-"` див. у
-[./validation_clear_policy_matrix.md](./validation_clear_policy_matrix.md).
+Якщо коротко:
+
+* спочатку система **підтягує або оновлює дані**,
+* потім ти **перевіряєш і редагуєш** файл `immobili.yml`,
+* після цього запускаєш **генерацію документів**.
+
+Основні правила роботи системи описані тут:
+[./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md)
+
+Правила для `"-"` і очищення полів описані тут:
+[./validation_clear_policy_matrix.md](./validation_clear_policy_matrix.md)
 
 ## 1. Три режими роботи
 
-### `prepare-by-CF`
+У системі є **три різні режими**. Вони не заміняють один одного, а виконують різні завдання.
 
-Command:
+### 1.1. Підготовка одного клієнта — `prepare-by-CF`
 
-```bash
-venv/bin/python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z
-```
-
-Input:
-
-- `--cf`
-- optional `--force-update-visura`
-- optional `--output`
-
-What it does:
-
-- перевіряє, чи вже є достатній DB state для цього `LOCATORE_CF`
-- якщо DB miss або задано `--force-update-visura`, запускає import-only path
-- після цього генерує один single-client `immobili.yml`
-
-Output:
-
-- готовий YAML-файл для одного клієнта
-- за замовчуванням це canonical generation path `clients/immobili.yml`
-- якщо задано `--output`, файл буде записаний туди
-
-If you use a custom output path and then want `scrapy crawl uppi` to read that
-file, set:
+Команда:
 
 ```bash
-export UPPI_IMMOBILI_YAML=/absolute/path/to/immobili.yml
+python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z
 ```
 
-### `bulk-import-by-clients-csv`
+Що передаємо:
 
-Command:
+* `--cf` — codice fiscale клієнта
+* `--force-update-visura` — необов’язково, якщо треба примусово оновити дані
+* `--output` — необов’язково, якщо хочеш зберегти YAML не в стандартне місце
+
+Що робить ця команда:
+
+1. Перевіряє, чи є в базі достатньо даних по цьому клієнту.
+2. Якщо даних не вистачає, запускає імпорт із SISTER.
+3. Якщо вказано `--force-update-visura`, теж запускає оновлення даних із SISTER, навіть якщо дані вже є.
+4. Після цього створює файл `immobili.yml` для **одного клієнта**.
+
+Що отримуємо в результаті:
+
+* готовий файл `immobili.yml`
+* у ньому є дані по клієнту і список його об’єктів нерухомості
+* цей файл використовується далі для генерації
+
+За замовчуванням файл записується сюди:
 
 ```bash
-venv/bin/python -m uppi.cli.bulk_import_clients_csv --csv clients/clients.csv
+clients/immobili.yml
 ```
 
-Input:
+Якщо передати `--output`, файл буде записаний у вказане тобою місце.
 
-- `--csv`
-- optional `--force-update-visura`
-- optional `--fail-fast`
+Приклад:
 
-What it does:
+```bash
+python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z --output /absolute/path/to/client.yml
+```
 
-- читає `clients.csv`
-- нормалізує й дедуплікує CF
-- для кожного валідного унікального CF запускає import-only boundary
+Якщо після цього ти хочеш, щоб команда генерації читала саме цей файл, треба вказати шлях через змінну середовища:
 
-Output:
+```bash
+export UPPI_IMMOBILI_YAML=/absolute/path/to/client.yml
+```
 
-- DB updates only
-- operator summary in stdout
-- no `immobili.yml`
-- no generation
+Це означає: під час генерації система має брати YAML **не зі стандартного `clients/immobili.yml`**, а з того файлу, який ,ed вказаний.
 
-### `scrapy crawl uppi`
+---
 
-Command:
+### 1.2. Генерація документів — `scrapy crawl uppi`
+
+Команда:
 
 ```bash
 scrapy crawl uppi
 ```
 
-Input:
+Що потрібно перед запуском:
 
-- prepared single-client `immobili.yml`
+* уже підготовлений файл `immobili.yml`
+* у базі мають бути потрібні дані по клієнту та його нерухомості
 
-What it does:
+Що робить ця команда:
 
-- валідовує canonical YAML document
-- бере тільки active immobili
-- робить strict DB match по `LOCATORE_CF + FOGLIO + NUMERO + SUB`
-- застосовує YAML-over-DB merge тільки для editable fields
-- пише назад тільки persistable fields
-- запускає generation stages
+1. Читає файл `immobili.yml`.
+2. Перевіряє, чи файл заповнений правильно.
+3. Бере тільки ті об’єкти, які позначені як активні.
+4. Шукає кожен об’єкт у базі за ключовими полями:
 
-Output:
+   * `LOCATORE_CF`
+   * `FOGLIO`
+   * `NUMERO`
+   * `SUB`
+5. Для дозволених полів бере значення з YAML, якщо вони були змінені оператором.
+6. Запускає розрахунок і генерацію документів.
 
-- DB write-back only for persistable surfaces
-- canone snapshot
-- DOCX generation / upload
-- audit records
+Що ця команда **не робить**:
 
-It does not:
+* не заходить у SISTER
+* не виконує імпорт
+* не вирішує, чи достатньо даних у базі
+* не намагається автоматично «дотягнути» відсутні дані
 
-- логінитися в AE/SISTER
-- refresh-ити visura
-- робити import fallback
+Якщо якогось об’єкта немає в базі, генерація зупиниться і підкаже спочатку виконати `prepare-by-CF`.
 
-## 2. Recommended Single-Client Flow
+---
 
-1. Run prepare:
+### 1.3. Масове оновлення бази з CSV — `bulk-import-by-clients-csv`
 
-   ```bash
-   venv/bin/python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z
-   ```
+Команда:
 
-2. Open the generated `clients/immobili.yml`.
+```bash
+python -m uppi.cli.bulk_import_clients_csv --csv clients/clients.csv
+```
 
-3. Review the root fields:
+Що передаємо:
 
-- `LOCATORE_COMUNE_RES`
-- `LOCATORE_VIA`
-- `LOCATORE_CIVICO`
+* `--csv` — шлях до CSV-файлу
+* `--force-update-visura` — необов’язково, якщо треба примусово оновлювати дані
+* `--fail-fast` — необов’язково, якщо треба зупинятись на першій помилці
 
-4. Review the `immobili:` list.
+Що робить ця команда:
 
-5. Disable any immobile you do not want to generate now:
+1. Читає список клієнтів із CSV.
+2. Бере з нього codice fiscale.
+3. Прибирає порожні, некоректні та дубльовані значення.
+4. Для кожного валідного клієнта запускає лише імпорт даних із SISTER у базу.
+
+Що важливо:
+
+* ця команда **не створює** `immobili.yml`
+* ця команда **не запускає** генерацію документів
+* вона потрібна для **масового оновлення або наповнення бази**
+
+Що отримуємо в результаті:
+
+* оновлену базу даних
+* короткий підсумок у консолі: що імпортовано, що пропущено, де були помилки
+
+---
+
+## 2. Найпростіший сценарій: один клієнт
+
+Це основний сценарій для щоденної роботи.
+
+### Крок 1. Підготувати дані клієнта
+
+Запусти:
+
+```bash
+venv/bin/python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z
+```
+
+Що станеться:
+
+* система перевірить, чи є дані в базі
+* якщо треба, сходить у SISTER і оновить їх
+* створить файл `immobili.yml`
+
+### Крок 2. Відкрити файл `immobili.yml`
+
+Після підготовки відкрий файл:
+
+```bash
+clients/immobili.yml
+```
+
+Якщо ти запускав `prepare_by_cf` з `--output`, відкривай той файл, який сам указав.
+
+### Крок 3. Перевірити дані клієнта у верхній частині файлу
+
+Зверни увагу насамперед на такі поля:
+
+* `LOCATORE_COMUNE_RES`
+* `LOCATORE_VIA`
+* `LOCATORE_CIVICO`
+
+Це дані по клієнту на рівні всього документа.
+
+### Крок 4. Перевірити список `immobili`
+
+У блоці `immobili:` є список об’єктів нерухомості цього клієнта.
+
+Для кожного об’єкта перевір:
+
+* чи це справді потрібний об’єкт
+* чи правильні адресні поля
+* чи треба вносити свої значення в редаговані поля
+
+### Крок 5. Вимкнути об’єкти, які не треба обробляти зараз
+
+Якщо якийсь об’єкт не треба включати в генерацію, постав:
 
 ```yaml
 enabled: false
 ```
 
-6. Edit only the operator-controlled fields you actually want to override.
+Тоді система пропустить його.
 
-7. Run generation:
+Якщо поле `enabled` не вказане, об’єкт вважається активним.
+
+### Крок 6. Заповнити або відредагувати потрібні поля
+
+Ти можеш редагувати тільки ті поля, які призначені для оператора.
+
+#### Поля клієнта
+
+* `LOCATORE_COMUNE_RES`
+* `LOCATORE_VIA`
+* `LOCATORE_CIVICO`
+
+#### Поля об’єкта нерухомості
+
+* `IMMOBILE_COMUNE`
+* `IMMOBILE_VIA`
+* `IMMOBILE_CIVICO`
+* `IMMOBILE_PIANO`
+* `IMMOBILE_INTERNO`
+* `ENERGY_CLASS`
+* `ARREDATO`
+* `ISTAT`
+* `IGNORE_SURCHARGES`
+* `CONTRACT_KIND`
+* `A/B/C/D`
+
+#### Поля, які використовуються тільки в поточному запуску
+
+* `CONDUTTORE_*`
+* `CONTRATTO_DATA`
+* `DECORRENZA_DATA`
+* `REGISTRAZIONE_*`
+* `AGENZIA_ENTRATE_SEDE`
+* `CANONE_CONTRATTUALE_MENSILE`
+* `DURATA_ANNI`
+
+Ці поля не є постійними налаштуваннями на майбутнє. Вони потрібні саме для поточного запуску генерації.
+
+### Крок 7. Якщо треба очистити значення
+
+Для деяких полів можна використовувати:
+
+```yaml
+"-"
+```
+
+Але це дозволено **не для всіх полів**.
+
+Коротко:
+
+* для частини полів `"-"` очищає значення в базі
+* для частини полів `"-"` очищає значення тільки в поточному запуску
+* для частини полів `"-"` взагалі заборонений і викликає помилку
+
+Точні правила дивись тут:
+[./validation_clear_policy_matrix.md](./validation_clear_policy_matrix.md)
+
+### Крок 8. Запустити генерацію
+
+Коли файл перевірений і відредагований, запусти:
 
 ```bash
 scrapy crawl uppi
 ```
 
-## 3. Recommended Bulk Flow
+Після цього система:
 
-Use bulk mode when the goal is DB refresh, not document generation.
+* прочитає YAML
+* візьме тільки активні об’єкти
+* перевірить кожен запис
+* запустить розрахунок
+* створить документи
 
-1. Prepare a `clients.csv` file with `LOCATORE_CF` values.
-2. Run:
+## 3. Сценарій для масового оновлення бази
 
-   ```bash
-   venv/bin/python -m uppi.cli.bulk_import_clients_csv --csv clients/clients.csv
-   ```
+Цей режим потрібен тоді, коли ти хочеш спочатку оновити базу даних по багатьох клієнтах, а вже потім окремо працювати з генерацією.
 
-3. Review the summary.
-4. For any client that now needs generation, switch back to `prepare-by-CF`.
+### Крок 1. Підготувати CSV-файл
 
-Canonical rule:
+У CSV мають бути codice fiscale клієнтів.
 
-- bulk mode is not a wrapper around prepare
-- bulk mode never generates YAML
-- generation still starts from `prepare-by-CF`
-
-## 4. Editing `immobili.yml`
-
-### `enabled`
-
-- Missing `enabled` means active.
-- `enabled: false` skips that immobile during generation.
-- If an immobile is removed from the document, generation never sees it.
-
-### Identity fields for active records
-
-For every active immobile record, the document must contain:
-
-- `FOGLIO`
-- `NUMERO`
-- `SUB`
-
-`SUB` must be present even when the cadastral sub is blank. A missing identity
-field is a validation error and generation stops before DB matching.
-
-### Fields the operator is expected to edit
-
-Root persistable:
-
-- `LOCATORE_COMUNE_RES`
-- `LOCATORE_VIA`
-- `LOCATORE_CIVICO`
-
-Immobile persistable editable:
-
-- `IMMOBILE_COMUNE`
-- `IMMOBILE_VIA`
-- `IMMOBILE_CIVICO`
-- `IMMOBILE_PIANO`
-- `IMMOBILE_INTERNO`
-- `ENERGY_CLASS`
-- `ARREDATO`
-- `ISTAT`
-- `IGNORE_SURCHARGES`
-- `CONTRACT_KIND`
-- `A/B/C/D`
-
-Run-only:
-
-- `CONDUTTORE_*`
-- `CONTRATTO_DATA`
-- `DECORRENZA_DATA`
-- `REGISTRAZIONE_*`
-- `AGENZIA_ENTRATE_SEDE`
-- `CANONE_CONTRATTUALE_MENSILE`
-- `DURATA_ANNI`
-
-## 5. How `"-"` Works
-
-Short version:
-
-- DB-clearable persistable fields: `"-"` means explicit DB clear
-- Run-only fields: `"-"` means clear only for the current generation run
-- Metadata, identity, visura/display fields: `"-"` is a validation error
-- `CONTRACT_KIND`: `"-"` is a validation error
-
-Full matrix:
-[./validation_clear_policy_matrix.md](./validation_clear_policy_matrix.md)
-
-## 6. Common Operator Errors
-
-### Generation says to run prepare first
-
-Meaning:
-
-- generation did a strict DB match
-- the requested immobile was not found in DB
-
-Action:
+### Крок 2. Запустити масове оновлення
 
 ```bash
-venv/bin/python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z
+python -m uppi.cli.bulk_import_clients_csv --csv clients/clients.csv
 ```
 
-If the DB state may be stale:
+### Крок 3. Перевірити результат у консолі
+
+Після завершення команда покаже:
+
+* скільки рядків прочитано
+* скільки клієнтів оброблено
+* які рядки були пропущені
+* де були помилки
+
+### Крок 4. Для потрібного клієнта перейти до індивідуальної підготовки
+
+Масове оновлення **не створює** `immobili.yml`, тому для генерації документів усе одно треба окремо запустити:
 
 ```bash
-venv/bin/python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z --force-update-visura
+python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z
 ```
 
-### Validation fails on `immobili.yml`
+Після цього дієш за звичайним сценарієм одного клієнта.
 
-Typical reasons:
+## 4. Як правильно редагувати `immobili.yml`
 
-- root document is not a mapping
-- `immobili` is not a list
-- active record is missing `FOGLIO`, `NUMERO`, or `SUB`
-- forbidden `"-"` target such as `LOCATORE_CF`, `FOGLIO`, `VISURA_VIA`, `CONTRACT_KIND`
+### Поле `enabled`
 
-Action:
+* якщо `enabled` відсутнє — об’єкт вважається активним
+* якщо вказано `enabled: false` — об’єкт пропускається
+* якщо об’єкт видалити з документа, система його просто не побачить
 
-- fix the YAML
-- rerun `scrapy crawl uppi`
+### Обов’язкові поля для активного об’єкта
 
-### Bulk mode reports invalid or duplicate rows
+Для кожного активного об’єкта мають бути:
 
-Meaning:
+* `FOGLIO`
+* `NUMERO`
+* `SUB`
 
-- blank CFs are skipped
-- malformed CFs are skipped
-- duplicate CFs are skipped after the first normalized occurrence
+Навіть якщо `SUB` порожній, саме поле має бути присутнє.
 
-Action:
+Якщо цих полів немає, генерація зупиниться ще до пошуку в базі.
 
-- clean the CSV if needed
-- rerun bulk mode
+### Які поля не можна ламати
 
-## 7. Internal Detail You Usually Do Not Need
+Не можна очищати через `"-"` такі поля:
 
-There is an internal import-only spider:
+#### Метадані документа
 
-- [../uppi/spiders/uppi_import_spider.py](../uppi/spiders/uppi_import_spider.py)
+* `LOCATORE_CF`
+* `COMUNE`
+* `TIPO_CATASTO`
+* `UFFICIO_PROVINCIALE_LABEL`
 
-Operators normally do not call it directly. It is reused by:
+#### Ключові поля об’єкта
 
-- `prepare-by-CF`
-- `bulk-import-by-clients-csv`
+* `FOGLIO`
+* `NUMERO`
+* `SUB`
+
+#### Поля з даними з visura
+
+* `RENDITA`
+* `SUPERFICIE_TOTALE`
+* `CATEGORIA`
+* `VISURA_COMUNE`
+* `VISURA_VIA`
+* `VISURA_CIVICO`
+
+#### Окремо
+
+* `CONTRACT_KIND` також не можна очищати через `"-"`
+
+## 5. Типові помилки і що робити
+
+### Помилка: система просить спочатку запустити prepare
+
+Що це означає:
+
+* генерація шукала об’єкт у базі
+* об’єкт не знайдено
+
+Що робити:
+
+```bash
+python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z
+```
+
+Якщо дані можуть бути застарілими:
+
+```bash
+python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z --force-update-visura
+```
+
+### Помилка: `immobili.yml` не проходить перевірку
+
+Найчастіші причини:
+
+* неправильна структура YAML
+* `immobili` не є списком
+* у активного запису немає `FOGLIO`, `NUMERO` або `SUB`
+* використано `"-"` у полі, де це заборонено
+
+Що робити:
+
+1. Виправити файл `immobili.yml`.
+2. Повторно запустити генерацію.
+
+### Помилка: у масовому режимі частина рядків пропущена
+
+Що це означає:
+
+* деякі codice fiscale були порожні
+* деякі були записані з помилкою
+* деякі повторювалися кілька разів
+
+Що робити:
+
+* перевірити CSV
+* прибрати помилки
+* знову запустити масове оновлення
+
+## 6. Важливе уточнення, яке зазвичай не потрібне оператору
+
+У системі є внутрішній імпортний шлях, який оператор зазвичай **не запускає напряму**.
+
+Він використовується всередині:
+
+* `prepare-by-CF`
+* `bulk-import-by-clients-csv`
+
+Тобто оператору в нормальній роботі достатньо трьох основних команд:
+
+* `prepare_by_cf`
+* `bulk_import_clients_csv`
+* `scrapy crawl uppi`
+
+## 7. Коротка пам’ятка
+
+### Якщо треба згенерувати документи для одного клієнта
+
+1. `prepare_by_cf`
+2. перевірити `immobili.yml`
+3. за потреби відредагувати
+4. `scrapy crawl uppi`
+
+### Якщо треба масово оновити базу
+
+1. `bulk_import_clients_csv`
+2. для потрібного клієнта — `prepare_by_cf`
+3. перевірити `immobili.yml`
+4. `scrapy crawl uppi`
