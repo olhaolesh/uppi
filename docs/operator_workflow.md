@@ -151,7 +151,7 @@ python -m uppi.cli.bulk_import_clients_csv --csv clients/clients.csv
 Запусти:
 
 ```bash
-venv/bin/python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z
+python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z
 ```
 
 Що станеться:
