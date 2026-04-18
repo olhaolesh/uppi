@@ -1,17 +1,22 @@
 # UPPI Update Implementation Plan
 
+> Archived.
+> Historical reference only.
+> Non-normative.
+> Do not use as the current behavioral source of truth.
+
 Status note:
 
 - цей файл є historical implementation plan після завершення rollout;
 - для current behavior треба читати
-  [./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md),
-  [./operator_workflow.md](./operator_workflow.md),
-  [./runtime_flow.md](./runtime_flow.md) і
-  [./validation_clear_policy_matrix.md](./validation_clear_policy_matrix.md);
+  [./immobili_rollout_source_of_truth.md](../immobili_rollout_source_of_truth.md),
+  [./operator_workflow.md](../operator_workflow.md),
+  [./runtime_flow.md](../runtime_flow.md) і
+  [./validation_clear_policy_matrix.md](../validation_clear_policy_matrix.md);
 - canonical source of truth для rollout-рішень зафіксовано в
-  [./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md);
+  [./immobili_rollout_source_of_truth.md](../immobili_rollout_source_of_truth.md);
 - ADR-контекст див. у
-  [./adr_0001_single_client_immobili_contract.md](./adr_0001_single_client_immobili_contract.md);
+  [./adr_0001_single_client_immobili_contract.md](../adr_0001_single_client_immobili_contract.md);
 - цей файл лишається planning artifact і не є current behavioral reference.
 
 Цей документ є фінальним implementation plan для оновлення UPPI під нову
@@ -66,7 +71,7 @@ browser/import logic.
 - Generation mode не повинен сам вирішувати, чи йти в SISTER, чи оновлювати
   visura, чи запускати browser flow.
 - Single-client YAML shape вважається остаточним рішенням і зафіксований у
-  [./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md).
+  [./immobili_rollout_source_of_truth.md](../immobili_rollout_source_of_truth.md).
 
 ## 3. Поточний стан проєкту
 
@@ -74,11 +79,11 @@ browser/import logic.
 
 Основний entry point зараз один:
 
-- [../scrapy.cfg](../scrapy.cfg)
-- [../uppi/settings.py](../uppi/settings.py)
-- [../uppi/spiders/uppi_spider.py](../uppi/spiders/uppi_spider.py)
+- [../scrapy.cfg](../../scrapy.cfg)
+- [../uppi/settings.py](../../uppi/settings.py)
+- [../uppi/spiders/uppi_spider.py](../../uppi/spiders/uppi_spider.py)
 
-Поточний [../uppi/spiders/uppi_spider.py](../uppi/spiders/uppi_spider.py):
+Поточний [../uppi/spiders/uppi_spider.py](../../uppi/spiders/uppi_spider.py):
 
 - чистить `state.json` і `captcha_images/` у `start()`;
 - читає `clients.yml` через `load_clients()`;
@@ -99,11 +104,11 @@ browser/import logic.
 
 Поточний input contract розмазаний по кількох модулях:
 
-- [../uppi/domain/clients.py](../uppi/domain/clients.py)
-- [../uppi/config/app_config.py](../uppi/config/app_config.py)
-- [../uppi/config/clients.py](../uppi/config/clients.py)
-- [../uppi/utils/item_mapper.py](../uppi/utils/item_mapper.py)
-- [../uppi/services/validation/yaml_validation.py](../uppi/services/validation/yaml_validation.py)
+- [../uppi/domain/clients.py](../../uppi/domain/clients.py)
+- [../uppi/config/app_config.py](../../uppi/config/app_config.py)
+- [../uppi/config/clients.py](../../uppi/config/clients.py)
+- [../uppi/utils/item_mapper.py](../../uppi/utils/item_mapper.py)
+- [../uppi/services/validation/yaml_validation.py](../../uppi/services/validation/yaml_validation.py)
 
 Поточна модель `clients.yml` є flat list і змішує:
 
@@ -120,9 +125,9 @@ browser/import logic.
 
 Non-browser orchestration зараз іде через:
 
-- [../uppi/pipelines.py](../uppi/pipelines.py)
-- [../uppi/services/visura_processor.py](../uppi/services/visura_processor.py)
-- [../uppi/services/visura_stages.py](../uppi/services/visura_stages.py)
+- [../uppi/pipelines.py](../../uppi/pipelines.py)
+- [../uppi/services/visura_processor.py](../../uppi/services/visura_processor.py)
+- [../uppi/services/visura_stages.py](../../uppi/services/visura_stages.py)
 
 Поточний `VisuraProcessor` координує все одним ланцюгом:
 
@@ -141,26 +146,26 @@ Non-browser orchestration зараз іде через:
 
 Repository surface:
 
-- [../uppi/services/repositories/address_repo.py](../uppi/services/repositories/address_repo.py)
-- [../uppi/services/repositories/person_repo.py](../uppi/services/repositories/person_repo.py)
-- [../uppi/services/repositories/visura_repo.py](../uppi/services/repositories/visura_repo.py)
-- [../uppi/services/repositories/immobile_repo.py](../uppi/services/repositories/immobile_repo.py)
-- [../uppi/services/repositories/contract_repo.py](../uppi/services/repositories/contract_repo.py)
-- [../uppi/services/repositories/audit_repo.py](../uppi/services/repositories/audit_repo.py)
-- facade: [../uppi/services/db_repo.py](../uppi/services/db_repo.py)
+- [../uppi/services/repositories/address_repo.py](../../uppi/services/repositories/address_repo.py)
+- [../uppi/services/repositories/person_repo.py](../../uppi/services/repositories/person_repo.py)
+- [../uppi/services/repositories/visura_repo.py](../../uppi/services/repositories/visura_repo.py)
+- [../uppi/services/repositories/immobile_repo.py](../../uppi/services/repositories/immobile_repo.py)
+- [../uppi/services/repositories/contract_repo.py](../../uppi/services/repositories/contract_repo.py)
+- [../uppi/services/repositories/audit_repo.py](../../uppi/services/repositories/audit_repo.py)
+- facade: [../uppi/services/db_repo.py](../../uppi/services/db_repo.py)
 
 Patch/business semantics:
 
-- [../uppi/services/policies/patch_policy.py](../uppi/services/policies/patch_policy.py)
-- [../uppi/services/policies/contract_patch_policy.py](../uppi/services/policies/contract_patch_policy.py)
-- [../uppi/services/policies/immobile_patch_policy.py](../uppi/services/policies/immobile_patch_policy.py)
+- [../uppi/services/policies/patch_policy.py](../../uppi/services/policies/patch_policy.py)
+- [../uppi/services/policies/contract_patch_policy.py](../../uppi/services/policies/contract_patch_policy.py)
+- [../uppi/services/policies/immobile_patch_policy.py](../../uppi/services/policies/immobile_patch_policy.py)
 
 Поточна проблема цього шару не в SQL як такому, а в тому, що:
 
 - persistable fields і run-only fields ще не розділені достатньо чітко;
 - current contract patching уже зберігає частину run data в `contracts`;
 - current joined contract context із
-  [../uppi/services/repositories/contract_repo.py](../uppi/services/repositories/contract_repo.py)
+  [../uppi/services/repositories/contract_repo.py](../../uppi/services/repositories/contract_repo.py)
   досі підтягує частину цих значень назад у generation path;
 - prepare generator не може без додаткових правил просто брати latest contract
   row як canonical source для нового `immobili.yml`.
@@ -169,18 +174,18 @@ Patch/business semantics:
 
 Protected browser path живе тут:
 
-- [../uppi/ae/auth.py](../uppi/ae/auth.py)
-- [../uppi/ae/sister_navigation.py](../uppi/ae/sister_navigation.py)
-- [../uppi/ae/download.py](../uppi/ae/download.py)
-- [../uppi/ae/captcha.py](../uppi/ae/captcha.py)
-- [../uppi/config/workspace.py](../uppi/config/workspace.py)
-- [../uppi/settings.py](../uppi/settings.py)
+- [../uppi/ae/auth.py](../../uppi/ae/auth.py)
+- [../uppi/ae/sister_navigation.py](../../uppi/ae/sister_navigation.py)
+- [../uppi/ae/download.py](../../uppi/ae/download.py)
+- [../uppi/ae/captcha.py](../../uppi/ae/captcha.py)
+- [../uppi/config/workspace.py](../../uppi/config/workspace.py)
+- [../uppi/settings.py](../../uppi/settings.py)
 
 Canonical constraints already documented in:
 
-- [./refactor_protected_invariants.md](./refactor_protected_invariants.md)
-- [./state_json_lifecycle_contract.md](./state_json_lifecycle_contract.md)
-- [./runtime_flow.md](./runtime_flow.md)
+- [./refactor_protected_invariants.md](../refactor_protected_invariants.md)
+- [./state_json_lifecycle_contract.md](../state_json_lifecycle_contract.md)
+- [./runtime_flow.md](../runtime_flow.md)
 
 Non-negotiable invariants:
 
@@ -197,7 +202,7 @@ Non-negotiable invariants:
 
 Поточна схема лежить у:
 
-- [../uppi/utils/db_utils/uppi_schema.sql](../uppi/utils/db_utils/uppi_schema.sql)
+- [../uppi/utils/db_utils/uppi_schema.sql](../../uppi/utils/db_utils/uppi_schema.sql)
 
 Ключові таблиці:
 
@@ -228,15 +233,15 @@ Non-negotiable invariants:
 Already supported `"-"` semantics:
 
 - `ENERGY_CLASS` через
-  [../uppi/services/policies/immobile_patch_policy.py](../uppi/services/policies/immobile_patch_policy.py)
+  [../uppi/services/policies/immobile_patch_policy.py](../../uppi/services/policies/immobile_patch_policy.py)
 - A/B/C/D через
-  [../uppi/services/policies/immobile_patch_policy.py](../uppi/services/policies/immobile_patch_policy.py)
+  [../uppi/services/policies/immobile_patch_policy.py](../../uppi/services/policies/immobile_patch_policy.py)
 - `ARREDATO`, `ISTAT`, `DURATA_ANNI`, `IGNORE_SURCHARGES` через
-  [../uppi/services/policies/contract_patch_policy.py](../uppi/services/policies/contract_patch_policy.py)
+  [../uppi/services/policies/contract_patch_policy.py](../../uppi/services/policies/contract_patch_policy.py)
 
 Current characterization coverage:
 
-- [../tests/test_db_repo_patch_characterization.py](../tests/test_db_repo_patch_characterization.py)
+- [../tests/test_db_repo_patch_characterization.py](../../tests/test_db_repo_patch_characterization.py)
 
 Поточні gaps:
 
@@ -247,7 +252,7 @@ Current characterization coverage:
 - current generation path не розрізняє “clear current run value” і “clear
   persistable DB value”.
 - водночас current
-  [../uppi/services/attestazione_generator.py](../uppi/services/attestazione_generator.py)
+  [../uppi/services/attestazione_generator.py](../../uppi/services/attestazione_generator.py)
   already бере `CONTRATTO_DATA`, `DECORRENZA_DATA`, `REGISTRAZIONE_*` і
   `CONDUTTORE_*` напряму з adapter/YAML, а не з joined DB context; це хороший
   базовий сигнал для нового поділу на run-only vs persistable surfaces.
@@ -322,9 +327,9 @@ Recommended implementation shape:
 **DB reads**
 
 - visura state через
-  [../uppi/services/repositories/visura_repo.py](../uppi/services/repositories/visura_repo.py)
+  [../uppi/services/repositories/visura_repo.py](../../uppi/services/repositories/visura_repo.py)
 - current immobile set через
-  [../uppi/services/repositories/immobile_repo.py](../uppi/services/repositories/immobile_repo.py)
+  [../uppi/services/repositories/immobile_repo.py](../../uppi/services/repositories/immobile_repo.py)
 - persistable client/immobile fields через `persons`, `addresses`,
   `immobile_elements`, selective contract reads
 
@@ -585,7 +590,7 @@ Generation path має використовувати саме їх для по�
 
 - `owner_cf, foglio, numero, sub`
 
-див. [../uppi/utils/db_utils/uppi_schema.sql](../uppi/utils/db_utils/uppi_schema.sql)
+див. [../uppi/utils/db_utils/uppi_schema.sql](../../uppi/utils/db_utils/uppi_schema.sql)
 
 ### 6.7 Visura-derived fields
 
@@ -744,11 +749,11 @@ Recommended rule:
 
 **Ймовірно зачіпаються**
 
-- [../uppi/config/app_config.py](../uppi/config/app_config.py)
-- [../uppi/domain/clients.py](../uppi/domain/clients.py)
-- [../uppi/config/clients.py](../uppi/config/clients.py)
-- [../tests/test_config_di_foundation.py](../tests/test_config_di_foundation.py)
-- [../tests/test_clients_mapping_characterization.py](../tests/test_clients_mapping_characterization.py)
+- [../uppi/config/app_config.py](../../uppi/config/app_config.py)
+- [../uppi/domain/clients.py](../../uppi/domain/clients.py)
+- [../uppi/config/clients.py](../../uppi/config/clients.py)
+- [../tests/test_config_di_foundation.py](../../tests/test_config_di_foundation.py)
+- [../tests/test_clients_mapping_characterization.py](../../tests/test_clients_mapping_characterization.py)
 
 **Ризик**
 
@@ -769,8 +774,8 @@ Recommended rule:
 **Ймовірно зачіпаються**
 
 - new module(s) під `uppi/config/` або `uppi/domain/`
-- [../uppi/services/validation/yaml_validation.py](../uppi/services/validation/yaml_validation.py)
-- [../uppi/utils/item_mapper.py](../uppi/utils/item_mapper.py)
+- [../uppi/services/validation/yaml_validation.py](../../uppi/services/validation/yaml_validation.py)
+- [../uppi/utils/item_mapper.py](../../uppi/utils/item_mapper.py)
 
 **Ризик**
 
@@ -792,7 +797,7 @@ Recommended rule:
 
 - new `uppi/cli/prepare_immobili.py`
 - new `uppi/cli/bulk_import_visure.py`
-- [../uppi/cli/inspect_clients.py](../uppi/cli/inspect_clients.py)
+- [../uppi/cli/inspect_clients.py](../../uppi/cli/inspect_clients.py)
 
 **Ризик**
 
@@ -813,9 +818,9 @@ Recommended rule:
 
 **Ймовірно зачіпаються**
 
-- [../uppi/spiders/uppi_spider.py](../uppi/spiders/uppi_spider.py)
+- [../uppi/spiders/uppi_spider.py](../../uppi/spiders/uppi_spider.py)
 - new `../uppi/spiders/uppi_import_spider.py`
-- [../uppi/settings.py](../uppi/settings.py) only if needed for safe registration
+- [../uppi/settings.py](../../uppi/settings.py) only if needed for safe registration
 
 **Ризик**
 
@@ -835,9 +840,9 @@ Recommended rule:
 
 **Ймовірно зачіпаються**
 
-- [../uppi/services/visura_processor.py](../uppi/services/visura_processor.py)
-- [../uppi/services/visura_stages.py](../uppi/services/visura_stages.py)
-- [../uppi/pipelines.py](../uppi/pipelines.py)
+- [../uppi/services/visura_processor.py](../../uppi/services/visura_processor.py)
+- [../uppi/services/visura_stages.py](../../uppi/services/visura_stages.py)
+- [../uppi/pipelines.py](../../uppi/pipelines.py)
 
 **Ризик**
 
@@ -858,9 +863,9 @@ Recommended rule:
 
 **Ймовірно зачіпаються**
 
-- [../uppi/services/visura_processor.py](../uppi/services/visura_processor.py)
-- [../uppi/services/visura_stages.py](../uppi/services/visura_stages.py)
-- [../uppi/services/attestazione_generator.py](../uppi/services/attestazione_generator.py)
+- [../uppi/services/visura_processor.py](../../uppi/services/visura_processor.py)
+- [../uppi/services/visura_stages.py](../../uppi/services/visura_stages.py)
+- [../uppi/services/attestazione_generator.py](../../uppi/services/attestazione_generator.py)
 
 **Ризик**
 
@@ -881,10 +886,10 @@ Recommended rule:
 
 **Ймовірно зачіпаються**
 
-- [../uppi/services/repositories/immobile_repo.py](../uppi/services/repositories/immobile_repo.py)
-- [../uppi/services/repositories/contract_repo.py](../uppi/services/repositories/contract_repo.py)
-- [../uppi/services/repositories/person_repo.py](../uppi/services/repositories/person_repo.py)
-- [../uppi/services/repositories/address_repo.py](../uppi/services/repositories/address_repo.py)
+- [../uppi/services/repositories/immobile_repo.py](../../uppi/services/repositories/immobile_repo.py)
+- [../uppi/services/repositories/contract_repo.py](../../uppi/services/repositories/contract_repo.py)
+- [../uppi/services/repositories/person_repo.py](../../uppi/services/repositories/person_repo.py)
+- [../uppi/services/repositories/address_repo.py](../../uppi/services/repositories/address_repo.py)
 
 **Ризик**
 
@@ -906,9 +911,9 @@ Recommended rule:
 
 **Ймовірно зачіпаються**
 
-- [../uppi/services/policies/contract_patch_policy.py](../uppi/services/policies/contract_patch_policy.py)
-- [../uppi/services/policies/immobile_patch_policy.py](../uppi/services/policies/immobile_patch_policy.py)
-- [../uppi/services/validation/yaml_validation.py](../uppi/services/validation/yaml_validation.py)
+- [../uppi/services/policies/contract_patch_policy.py](../../uppi/services/policies/contract_patch_policy.py)
+- [../uppi/services/policies/immobile_patch_policy.py](../../uppi/services/policies/immobile_patch_policy.py)
+- [../uppi/services/validation/yaml_validation.py](../../uppi/services/validation/yaml_validation.py)
 
 **Ризик**
 
@@ -928,11 +933,11 @@ Recommended rule:
 
 **Ймовірно зачіпаються**
 
-- [../README.md](../README.md)
-- [./runtime_flow.md](./runtime_flow.md)
-- [./current_architecture.md](./current_architecture.md)
-- [./local_development_and_testing.md](./local_development_and_testing.md)
-- [./live_smoke_strategy_ae_sister.md](./live_smoke_strategy_ae_sister.md)
+- [../README.md](../../README.md)
+- [./runtime_flow.md](../runtime_flow.md)
+- [./current_architecture.md](../current_architecture.md)
+- [./local_development_and_testing.md](../local_development_and_testing.md)
+- [./live_smoke_strategy_ae_sister.md](../live_smoke_strategy_ae_sister.md)
 
 **Ризик**
 
@@ -1201,7 +1206,7 @@ Multi-CF generation bundle був би доречний тільки як generi
 ## 11. Practical recommended order
 
 1. Заморозити
-   [./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md)
+   [./immobili_rollout_source_of_truth.md](../immobili_rollout_source_of_truth.md)
    як canonical contract і не повертатися до multi-CF generation architecture.
 2. Винести input contract у single-client `immobili.yml` + CSV abstraction.
 3. Побудувати DB-driven generator для `immobili.yml`.

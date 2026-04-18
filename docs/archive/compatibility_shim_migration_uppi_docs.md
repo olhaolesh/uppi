@@ -1,5 +1,10 @@
 # Compatibility-Shim Migration Slice For `uppi/docs/`
 
+> Archived.
+> Historical reference only.
+> Non-normative.
+> Do not use as the current behavioral source of truth.
+
 Цей документ фіксує поточний Sprint 3 migration slice для production code, який
 історично лежав у `uppi/docs/`.
 
@@ -15,9 +20,9 @@
 У цьому PR мігрується лише реально активний production helper:
 
 - old path:
-  [../uppi/docs/attestazione_template_filler.py](../uppi/docs/attestazione_template_filler.py)
+  [../uppi/docs/attestazione_template_filler.py](../../uppi/docs/attestazione_template_filler.py)
 - new canonical home:
-  [../uppi/services/attestazione_template_filler.py](../uppi/services/attestazione_template_filler.py)
+  [../uppi/services/attestazione_template_filler.py](../../uppi/services/attestazione_template_filler.py)
 
 Причина такого вузького scope:
 
@@ -58,5 +63,5 @@ Later safe cleanup може включати:
 
 ## Related Documents
 
-- [./document_generation.md](./document_generation.md)
-- [./current_architecture.md](./current_architecture.md)
+- [./document_generation.md](../document_generation.md)
+- [./current_architecture.md](../current_architecture.md)

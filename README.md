@@ -8,6 +8,8 @@ UPPI працює у трьох окремих режимах:
 
 Canonical behavioral contract зафіксований у
 [docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md).
+Повна карта актуальної документації зібрана в
+[docs/README.md](docs/README.md).
 
 ## What Changed
 
@@ -65,6 +67,10 @@ Recommended operator guide:
 
 ## Documentation Map
 
+Canonical doc index:
+
+- [docs/README.md](docs/README.md)
+
 Canonical contract and operator docs:
 
 - [docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md)
@@ -90,11 +96,9 @@ Protected invariants and reference docs:
 - [docs/document_generation.md](docs/document_generation.md)
 - [docs/failure_registry_contract.md](docs/failure_registry_contract.md)
 
-Historical planning artifacts:
+Historical archive:
 
-- [docs/uppi_update_implementation_plan.md](docs/uppi_update_implementation_plan.md)
-- [docs/Uppi_Покроковий_План_Виконання.md](docs/Uppi_Покроковий_План_Виконання.md)
-- [docs/archive/refactor_execution_plan_overview.md](docs/archive/refactor_execution_plan_overview.md)
+- [docs/archive/README.md](docs/archive/README.md)
 
 ## Configuration Surface
 

@@ -1,13 +1,18 @@
 # UPPI — покроковий план виконання
 
+> Archived.
+> Historical reference only.
+> Non-normative.
+> Do not use as the current behavioral source of truth.
+
 Це не загальний архітектурний опис, а практичний порядок робіт: що саме робити, у якій послідовності, який результат має бути після кожного кроку і де зупинятись для перевірки.
 
 Normative note:
 
 * status: цей файл тепер є historical execution-order artifact після завершення rollout
-* для current operator behavior треба читати [./operator_workflow.md](./operator_workflow.md), [./runtime_flow.md](./runtime_flow.md) і [./validation_clear_policy_matrix.md](./validation_clear_policy_matrix.md)
-* canonical source of truth для rollout-рішень зафіксовано в [./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md)
-* ADR-контекст див. у [./adr_0001_single_client_immobili_contract.md](./adr_0001_single_client_immobili_contract.md)
+* для current operator behavior треба читати [./operator_workflow.md](../operator_workflow.md), [./runtime_flow.md](../runtime_flow.md) і [./validation_clear_policy_matrix.md](../validation_clear_policy_matrix.md)
+* canonical source of truth для rollout-рішень зафіксовано в [./immobili_rollout_source_of_truth.md](../immobili_rollout_source_of_truth.md)
+* ADR-контекст див. у [./adr_0001_single_client_immobili_contract.md](../adr_0001_single_client_immobili_contract.md)
 * цей файл описує execution order і не є current behavioral contract
 
 ## Базові правила, які вважаємо вже зафіксованими
@@ -44,7 +49,7 @@ Normative note:
 ### Результат кроку
 
 * більше не обговорюємо формат YAML і роль режимів
-* це зафіксовано в [./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md) як нормативний контракт для наступних змін
+* це зафіксовано в [./immobili_rollout_source_of_truth.md](../immobili_rollout_source_of_truth.md) як нормативний контракт для наступних змін
 
 ### Не робити
 

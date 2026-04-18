@@ -91,7 +91,7 @@ Current remote naming:
 
 Migration note:
 
-- [./compatibility_shim_migration_uppi_docs.md](./compatibility_shim_migration_uppi_docs.md)
+- [./archive/compatibility_shim_migration_uppi_docs.md](./archive/compatibility_shim_migration_uppi_docs.md)
 
 ## 6. Baseline tests
 

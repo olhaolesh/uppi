@@ -307,7 +307,8 @@ Canonical invariants already frozen in:
   [./validation_clear_policy_matrix.md](./validation_clear_policy_matrix.md)
 - Regression test map: [./regression_test_map.md](./regression_test_map.md)
 - Rollout-ready checklist: [./rollout_ready_checklist.md](./rollout_ready_checklist.md)
+- Historical archive: [./archive/README.md](./archive/README.md)
 - Detailed rollout plan:
-  [./uppi_update_implementation_plan.md](./uppi_update_implementation_plan.md)
+  [./archive/uppi_update_implementation_plan.md](./archive/uppi_update_implementation_plan.md)
 - Practical step-by-step plan:
-  [./Uppi_Покроковий_План_Виконання.md](./Uppi_Покроковий_План_Виконання.md)
+  [./archive/Uppi_Покроковий_План_Виконання.md](./archive/Uppi_Покроковий_План_Виконання.md)
