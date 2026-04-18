@@ -1,26 +1,24 @@
-# Локальний запуск і тестування
+# Local Development and Testing
 
-Цей документ пояснює, як підняти проєкт локально, які команди запускати і як
-перевіряти зміни без випадкового порушення protected flow.
+Цей документ описує актуальний local setup, command surface і testing guidance
+після rollout split.
 
-Legacy note для rollout:
+Operator-facing workflow:
+[./operator_workflow.md](./operator_workflow.md)
 
-- цей файл описує поточну implemented command/config surface;
-- він не є source of truth для нового contract split між `prepare`, bulk import
-  і generation;
-- для rollout-target режимів і нового `immobili.yml` див.
-  [./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md).
+Regression map:
+[./regression_test_map.md](./regression_test_map.md)
 
-## 1. Що потрібно локально
+## 1. Local Requirements
 
 - Python 3.11
-- virtualenv `venv/`
+- `venv/`
 - PostgreSQL
-- S3-compatible storage (локальний MinIO достатній)
+- S3-compatible storage such as MinIO
 - Playwright browser dependencies
-- `.env` з AE/SISTER/DB/S3 налаштуваннями
+- `.env` with AE/SISTER, DB, and storage settings
 
-## 2. Мінімальна підготовка середовища
+## 2. Initial Setup
 
 ```bash
 python -m venv venv
@@ -29,132 +27,153 @@ pip install -r requirements.txt
 playwright install
 ```
 
-## 3. База даних
+## 3. Database
 
-Ініціалізація схеми:
+Initialize schema:
 
 ```bash
 python uppi/utils/db_utils/init_db.py
 ```
 
-Current schema file:
+Schema file:
 
 - [../uppi/utils/db_utils/uppi_schema.sql](../uppi/utils/db_utils/uppi_schema.sql)
 
-## 4. Конфіг і `.env`
+## 4. Relevant Config Surface
 
-Основні групи налаштувань:
+Canonical generation input:
 
-- AE/SISTER credentials і URLs
-- 2Captcha key
-- PostgreSQL
-- S3-compatible storage
-- `UPPI_CLIENTS_YAML` у поточній legacy реалізації
-- runtime flags для pipeline
+- `UPPI_IMMOBILI_YAML`
 
-Current config surface:
+Bulk CSV input:
+
+- `UPPI_CLIENTS_CSV`
+
+Legacy compatibility only:
+
+- `UPPI_CLIENTS_YAML`
+  This is not the canonical generation source. It remains only for the internal
+  import-only spider compatibility seam.
+
+Other useful runtime/config modules:
 
 - [../uppi/config/app_config.py](../uppi/config/app_config.py)
 - [../uppi/config/workspace.py](../uppi/config/workspace.py)
 
-## 5. Локальний запуск поточної реалізації
+## 5. Main Local Commands
 
-Основний запуск:
+### Prepare one client
+
+```bash
+venv/bin/python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z
+```
+
+Optional forced refresh:
+
+```bash
+venv/bin/python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z --force-update-visura
+```
+
+### Bulk import-only from CSV
+
+```bash
+venv/bin/python -m uppi.cli.bulk_import_clients_csv --csv clients/clients.csv
+```
+
+Optional strict stop-on-failure mode:
+
+```bash
+venv/bin/python -m uppi.cli.bulk_import_clients_csv --csv clients/clients.csv --fail-fast
+```
+
+### Generation-only run
 
 ```bash
 scrapy crawl uppi
 ```
 
-Що робити перед run:
+Important:
 
-- перевірити `.env`
-- переконатися, що DB і storage доступні
-- переконатися, що `clients.yml` вказує на потрібний input у поточній
-  реалізації
+- `scrapy crawl uppi` expects a prepared `immobili.yml`
+- it does not use `clients.yml` as the canonical input
+- it does not run browser/import logic
 
-## 6. Основна тестова команда
+## 6. Internal Command Surface
+
+There is an internal import-only spider:
+
+```bash
+python -m scrapy crawl uppi_import
+```
+
+This is primarily reused by services and tests. Operators normally use:
+
+- `prepare-by-CF`
+- bulk CSV import-only mode
+
+## 7. Recommended Test Commands
+
+### Full test run
 
 ```bash
 venv/bin/python -m pytest -q
 ```
 
-## 7. Найважливіші test suites
+### Rollout-focused regression sweep
 
-### Базові regression suites
+Use the command from:
+[./regression_test_map.md](./regression_test_map.md)
 
-- [../tests/test_pipeline_golden_path_integration.py](../tests/test_pipeline_golden_path_integration.py)
-- [../tests/test_visura_pdf_parser_baseline.py](../tests/test_visura_pdf_parser_baseline.py)
-- [../tests/test_attestazione_generator_baseline.py](../tests/test_attestazione_generator_baseline.py)
+### Rollout pre-flight checklist
 
-### Repo / SQL contracts
+Use:
+[./rollout_ready_checklist.md](./rollout_ready_checklist.md)
 
-- [../tests/test_db_repo_patch_characterization.py](../tests/test_db_repo_patch_characterization.py)
-- [../tests/test_db_repo_postgres_integration.py](../tests/test_db_repo_postgres_integration.py)
+## 8. When Manual Live Smoke Is Needed
 
-### Service boundaries
-
-- [../tests/test_visura_stage_services.py](../tests/test_visura_stage_services.py)
-- [../tests/test_validation_layer.py](../tests/test_validation_layer.py)
-- [../tests/test_domain_exceptions.py](../tests/test_domain_exceptions.py)
-- [../tests/test_failure_reporting_integration.py](../tests/test_failure_reporting_integration.py)
-- [../tests/test_retry_policy.py](../tests/test_retry_policy.py)
-
-### Workspace / state / safety contracts
-
-- [../tests/test_workspace_policy.py](../tests/test_workspace_policy.py)
-- [../tests/test_state_json_lifecycle_contract.py](../tests/test_state_json_lifecycle_contract.py)
-
-## 8. Коли потрібен manual live smoke
-
-Live smoke потрібен, якщо PR торкається:
-
-- browser-critical flow
-- `state.json`
-- cleanup/path handling around logout/state artifacts
-- end-to-end artifact path resolution
+Live smoke is required when a change touches the protected browser/import reuse
+path or `state.json` lifecycle.
 
 Canonical checklist:
 
 - [./live_smoke_strategy_ae_sister.md](./live_smoke_strategy_ae_sister.md)
 
-## 9. Troubleshooting map
+Typical trigger areas:
 
-### Не працює AE/SISTER/login/logout
+- `uppi/ae/*`
+- [../uppi/spiders/uppi_browser_spider.py](../uppi/spiders/uppi_browser_spider.py)
+- [../uppi/spiders/uppi_import_spider.py](../uppi/spiders/uppi_import_spider.py)
+- [../uppi/services/import_only_runner.py](../uppi/services/import_only_runner.py)
+- `state.json` lifecycle handling
 
-Читати:
+## 9. Troubleshooting Map
+
+### Prepare or bulk import behavior
+
+Read:
+
+- [./operator_workflow.md](./operator_workflow.md)
+- [./runtime_flow.md](./runtime_flow.md)
+
+### Generation behavior
+
+Read:
+
+- [./runtime_flow.md](./runtime_flow.md)
+- [./validation_clear_policy_matrix.md](./validation_clear_policy_matrix.md)
+- [./document_generation.md](./document_generation.md)
+
+### Browser/import invariants
+
+Read:
 
 - [./refactor_protected_invariants.md](./refactor_protected_invariants.md)
 - [./state_json_lifecycle_contract.md](./state_json_lifecycle_contract.md)
 
-### Ламається parser / DB / stage pipeline
+### Failure or artifact consistency
 
-Читати:
-
-- [./runtime_flow.md](./runtime_flow.md)
-- [./current_architecture.md](./current_architecture.md)
-
-### Проблема з partial failures або artifact consistency
-
-Читати:
-
-- [./transaction_resource_safety_review.md](./transaction_resource_safety_review.md)
-- [./workspace_local_artifacts_policy.md](./workspace_local_artifacts_policy.md)
-
-### Проблема з DOCX generation
-
-Читати:
-
-- [./document_generation.md](./document_generation.md)
-
-### Проблема з failure reporting / retry flags
-
-Читати:
+Read:
 
 - [./failure_registry_contract.md](./failure_registry_contract.md)
-
-## 10. Що не треба робити “по дорозі”
-
-- не міняти browser flow під час звичайного docs/test cleanup
-- не оптимізувати `state.json` lifecycle
-- не змішувати behavior fix з великим documentation PR
-- не трактувати historical sprint docs як current runbook
+- [./workspace_local_artifacts_policy.md](./workspace_local_artifacts_policy.md)
+- [./transaction_resource_safety_review.md](./transaction_resource_safety_review.md)

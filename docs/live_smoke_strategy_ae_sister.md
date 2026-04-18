@@ -11,9 +11,14 @@ Protected invariants, які не можна переосмислювати пі
   CAPTCHA path, visura download або explicit logout.
 - Не допустити неявного redesign `state.json` lifecycle під виглядом harmless cleanup.
 
+Цей smoke стосується protected browser/import reuse path, а не normal
+generation-only command `scrapy crawl uppi`.
+
 ## Коли live smoke обов'язковий
 
-- Після великих змін у [uppi/spiders/uppi_spider.py](../uppi/spiders/uppi_spider.py).
+- Після великих змін у [../uppi/spiders/uppi_browser_spider.py](../uppi/spiders/uppi_browser_spider.py).
+- Після змін у [../uppi/spiders/uppi_import_spider.py](../uppi/spiders/uppi_import_spider.py).
+- Після змін у [../uppi/services/import_only_runner.py](../uppi/services/import_only_runner.py).
 - Після змін у `uppi/ae/*`.
 - Після змін у browser-adjacent logging calls або cleanup навколо AE / SISTER flow.
 - Перед merge великого PR, який чіпає AE auth, direct SISTER entry, CAPTCHA,
@@ -147,3 +152,4 @@ Owner:
 - Current runtime flow: [./runtime_flow.md](./runtime_flow.md)
 - Current architecture guide: [./current_architecture.md](./current_architecture.md)
 - Smoke sign-off template: [./live_smoke_signoff_template_ae_sister.md](./live_smoke_signoff_template_ae_sister.md)
+- Rollout checklist: [./rollout_ready_checklist.md](./rollout_ready_checklist.md)

@@ -11,6 +11,7 @@ from itemadapter import ItemAdapter
 import uppi.spiders.uppi_spider as spider_module
 from uppi.config.immobili import ImmobileConfig, ImmobiliDocumentConfig
 from uppi.items import UppiItem
+from uppi.utils.immobili_item_mapper import map_immobili_document_to_item
 
 
 async def _consume(async_iterable) -> list:
@@ -91,3 +92,35 @@ def test_generation_spider_yields_items_without_browser_requests(monkeypatch, tm
     assert len(yielded) == 1
     assert not hasattr(yielded[0], "meta")
     assert spider.allowed_domains == []
+
+
+def test_map_immobili_document_to_item_normalizes_run_only_clear_markers_but_preserves_db_clear_markers():
+    """Run-only `-` must become blank current-run state without touching DB-clearable markers."""
+    document = ImmobiliDocumentConfig(
+        locatore_cf="RSSMRA80A01H501Z",
+        locatore_via="-",
+        immobili=(
+            ImmobileConfig(
+                enabled=True,
+                foglio="12",
+                numero="345",
+                sub="",
+                energy_class="-",
+                conduttore_cf="-",
+                contratto_data="-",
+                canone_contrattuale_mensile="-",
+                durata_anni="-",
+                elements={"a1": "-"},
+            ),
+        ),
+    )
+
+    mapped = map_immobili_document_to_item(document, document.immobili[0])
+
+    assert mapped["locatore_via"] == "-"
+    assert mapped["energy_class"] == "-"
+    assert mapped["a1"] == "-"
+    assert mapped["conduttore_cf"] is None
+    assert mapped["contratto_data"] is None
+    assert mapped["canone_contrattuale_mensile"] is None
+    assert mapped["durata_anni"] is None

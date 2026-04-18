@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from uppi.domain.immobile import Immobile
+from uppi.services.policies.immobili_generation_policy import normalize_run_only_item_value
 from uppi.utils.audit import format_person_fullname
 from uppi.utils.parse_utils import clean_str
 
@@ -20,6 +21,10 @@ ELEMENT_KEYS = (
 def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) -> Dict[str, str]:
     """Будує словник placeholder-ів для DOCX-шаблону атестації."""
     params: Dict[str, str] = {}
+
+    def _run_only_text(field_name: str) -> str:
+        """Run-only clear markers become blank placeholders for the current document run."""
+        return clean_str(normalize_run_only_item_value(field_name, adapter.get(field_name))) or ""
 
     # Розпаковуємо контекст
     overrides = contract_ctx.get("overrides") or {}
@@ -99,21 +104,21 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
     # щоб ігнорувати старі записи в БД, якщо в YAML пусто.
 
     # --- БЕРЕТЬСЯ Тільки з YAML ---
-    params["{{CONTRATTO_DATA}}"] = clean_str(adapter.get("contratto_data")) or ""
-    params["{{DECORRENZA_DATA}}"] = clean_str(adapter.get("decorrenza_data")) or ""
-    params["{{REGISTRAZIONE_DATA}}"] = clean_str(adapter.get("registrazione_data")) or ""
-    params["{{REGISTRAZIONE_NUM}}"] = clean_str(adapter.get("registrazione_num")) or ""
-    params["{{AGENZIA_ENTRATE_SEDE}}"] = clean_str(adapter.get("agenzia_entrate_sede")) or ""
+    params["{{CONTRATTO_DATA}}"] = _run_only_text("contratto_data")
+    params["{{DECORRENZA_DATA}}"] = _run_only_text("decorrenza_data")
+    params["{{REGISTRAZIONE_DATA}}"] = _run_only_text("registrazione_data")
+    params["{{REGISTRAZIONE_NUM}}"] = _run_only_text("registrazione_num")
+    params["{{AGENZIA_ENTRATE_SEDE}}"] = _run_only_text("agenzia_entrate_sede")
     # ---------------------------------
 
     # 4. ДАНІ ОРЕНДАРЯ (CONDUTTORE)
     # !!! ТУТ ЗМІНИ: Ігноруємо БД (parties.get("CONDUTTORE")), беремо тільки з YAML.
     # Якщо в YAML пусто -> буде пуста строка -> будуть підкреслення.
     
-    cond_nome = clean_str(adapter.get("conduttore_nome")) or ""
-    cond_cf = clean_str(adapter.get("conduttore_cf")) or ""
-    cond_comune = clean_str(adapter.get("conduttore_comune")) or ""
-    cond_via = clean_str(adapter.get("conduttore_via")) or ""
+    cond_nome = _run_only_text("conduttore_nome")
+    cond_cf = _run_only_text("conduttore_cf")
+    cond_comune = _run_only_text("conduttore_comune")
+    cond_via = _run_only_text("conduttore_via")
 
     params["{{CONDUTTORE_NOME}}"] = cond_nome
     params["{{CONDUTTORE_CF}}"] = cond_cf
@@ -295,7 +300,10 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
         except Exception:
             pass
 
-    agreed = adapter.get("canone_contrattuale_mensile")
+    agreed = normalize_run_only_item_value(
+        "canone_contrattuale_mensile",
+        adapter.get("canone_contrattuale_mensile"),
+    )
     if agreed is not None:
         params["{{CAN_MENSILE}}"] = _fmt_num(agreed, 2)
 

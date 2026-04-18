@@ -1,243 +1,172 @@
-# Основний runtime flow
+# Runtime Flow
 
-Цей документ пояснює, що саме відбувається під час одного run, у якій
-послідовності це виконується і які модулі беруть участь на кожному етапі.
+Цей документ описує фактичний current runtime після rollout split на три
+режими.
 
-Legacy note для rollout:
+Canonical contract:
+[./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md)
 
-- цей файл описує поточну implemented mixed-flow модель;
-- він не є source of truth для нового rollout contract;
-- для single-client `immobili.yml`, трьох цільових режимів і правила
-  `prepare owns fetch/update logic` див.
-  [./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md).
+Operator runbook:
+[./operator_workflow.md](./operator_workflow.md)
 
-## 1. Що є input у поточній реалізації
+## 1. Mode Map
 
-Основний input у поточній реалізації — `clients.yml`.
+UPPI now has three distinct runtime modes:
+
+1. `prepare-by-CF`
+2. `bulk-import-by-clients-csv`
+3. `scrapy crawl uppi`
+
+Internal browser/import reuse lives behind the import-only spider:
+
+- [../uppi/spiders/uppi_import_spider.py](../uppi/spiders/uppi_import_spider.py)
+
+## 2. Prepare-by-CF Flow
 
 Code path:
 
-- [../uppi/domain/clients.py](../uppi/domain/clients.py)
-- [../uppi/config/app_config.py](../uppi/config/app_config.py)
+- [../uppi/cli/prepare_by_cf.py](../uppi/cli/prepare_by_cf.py)
+- [../uppi/services/prepare_by_cf.py](../uppi/services/prepare_by_cf.py)
+- [../uppi/services/import_only_runner.py](../uppi/services/import_only_runner.py)
+- [../uppi/services/immobili_yaml_generator.py](../uppi/services/immobili_yaml_generator.py)
 
-Що тут відбувається:
+Flow:
 
-- YAML читається
-- current mapping і defaults нормалізуються
-- validation layer перевіряє базовий structural contract
+1. normalize and validate `--cf`
+2. read explicit DB presence criterion
+3. decide between:
+   - DB hit + no force
+   - DB miss
+   - DB hit + force refresh
+4. if import is needed, call the reusable import-only runner
+5. after DB is ready, generate a single-client `immobili.yml`
+6. stop after writing the YAML file
 
-## 2. Spider start: fresh session і cache decision
+Important:
+
+- prepare owns fetch/update logic
+- prepare does not run generation stages
+- prepare does not read `immobili.yml` as input
+
+## 3. Bulk CSV Import-Only Flow
+
+Code path:
+
+- [../uppi/cli/bulk_import_clients_csv.py](../uppi/cli/bulk_import_clients_csv.py)
+- [../uppi/services/bulk_import_clients_csv.py](../uppi/services/bulk_import_clients_csv.py)
+- [../uppi/domain/clients_csv.py](../uppi/domain/clients_csv.py)
+- [../uppi/services/import_only_runner.py](../uppi/services/import_only_runner.py)
+
+Flow:
+
+1. load `clients.csv`
+2. normalize CF values
+3. skip invalid rows
+4. dedupe by normalized CF while preserving first occurrence order
+5. call the import-only runner once per unique valid CF
+6. collect per-row results and summary
+7. stop without YAML generation
+
+Important:
+
+- bulk mode is import-only
+- bulk mode never calls prepare
+- bulk mode never calls generation stages
+
+## 4. Generation-Only Flow
 
 Code path:
 
 - [../uppi/spiders/uppi_spider.py](../uppi/spiders/uppi_spider.py)
+- [../uppi/domain/immobili_document.py](../uppi/domain/immobili_document.py)
+- [../uppi/utils/immobili_item_mapper.py](../uppi/utils/immobili_item_mapper.py)
+- [../uppi/pipelines.py](../uppi/pipelines.py)
+- [../uppi/services/visura_processor.py](../uppi/services/visura_processor.py)
+- [../uppi/services/visura_stages.py](../uppi/services/visura_stages.py)
 
-На старті spider:
+Flow:
 
-1. чистить старий `state.json`
-2. чистить `captcha_images/`
-3. читає clients input
-4. для кожного клієнта вирішує:
-   - чи можна пропустити browser path і використати current DB/storage state
-   - чи треба реально йти в SISTER
+1. load canonical single-client `immobili.yml`
+2. validate document shape and field-level policy
+3. filter to active immobili where `enabled != false`
+4. map each active record into a generation item
+5. enter `UppiPipeline`
+6. `VisuraProcessor.process_generation_item()` performs strict DB match
+7. for each matched immobile:
+   - `ContractSyncService`
+   - `CanoneStageService`
+   - `DocumentStageService`
+   - `AuditStageService`
+8. commit the transaction
 
-Тут важливо:
+Important:
 
-- `state.json` не reusable cache
-- cleanup старого state — частина protected lifecycle
+- generation does not login to AE/SISTER
+- generation does not call the import-only runner
+- generation does not read `clients.yml`
+- missing DB immobile hard-fails with prepare guidance
 
-## 3. Browser phase: AE -> SISTER -> download
+## 5. Internal Import-Only Browser Path
 
-Code paths:
+Code path:
 
-- [../uppi/ae/auth.py](../uppi/ae/auth.py)
-- [../uppi/ae/sister_navigation.py](../uppi/ae/sister_navigation.py)
-- [../uppi/ae/captcha.py](../uppi/ae/captcha.py)
-- [../uppi/ae/download.py](../uppi/ae/download.py)
-
-Послідовність:
-
-1. login у AE
-2. open SISTER in new tab
-3. save `state.json`
-4. navigate to `Visure catastali`
-5. solve CAPTCHA if present
-6. trigger PDF download
-7. explicit logout
-
-Що тут не можна змінювати casually:
-
-- selector order
-- wait/click/fill sequence
-- direct SISTER contract
-- logout semantics
-- `state.json` lifecycle
-
-Reference:
-
-- [./refactor_protected_invariants.md](./refactor_protected_invariants.md)
-- [./state_json_lifecycle_contract.md](./state_json_lifecycle_contract.md)
-
-## 4. Item entering the non-browser pipeline
-
-Після browser phase spider yield-ить `UppiItem`.
-
-Далі item іде в pipeline:
-
+- [../uppi/spiders/uppi_browser_spider.py](../uppi/spiders/uppi_browser_spider.py)
+- [../uppi/spiders/uppi_import_spider.py](../uppi/spiders/uppi_import_spider.py)
 - [../uppi/pipelines.py](../uppi/pipelines.py)
 - [../uppi/services/visura_processor.py](../uppi/services/visura_processor.py)
 
-Pipeline вже не керує браузером. Тут починається non-browser data/document flow.
+Flow:
 
-## 5. Outer orchestrator
+1. load legacy/transitional flat `clients.yml` input prepared by the runner
+2. execute the protected browser-critical flow
+3. enter `UppiImportPipeline`
+4. `VisuraProcessor.process_import_item()` runs:
+   - `PersonSyncService`
+   - `VisuraIngestService`
+   - `ImmobileSyncService`
+5. stop after `ImmobileSync`
 
-Current orchestrator:
+Important:
 
-- [../uppi/services/visura_processor.py](../uppi/services/visura_processor.py)
+- this path is internal and reused by prepare/bulk
+- it exists to preserve the protected browser flow
+- it is not the canonical operator-facing generation entry point
 
-Що він робить:
+## 6. Field Policy in the Runtime
 
-- створює DB connection
-- координує stage order
-- володіє outer `commit()`, `rollback()` і `close()`
-- не виконує сам весь business logic вручну, а делегує stage services
+Validation and clear semantics are centralized in:
 
-## 6. Stage services у поточному порядку
+- [../uppi/services/validation/yaml_validation.py](../uppi/services/validation/yaml_validation.py)
+- [../uppi/services/policies/immobili_generation_policy.py](../uppi/services/policies/immobili_generation_policy.py)
 
-### `PersonSyncService`
+Write-back policy lives in:
 
-Що робить:
+- [../uppi/services/policies/contract_patch_policy.py](../uppi/services/policies/contract_patch_policy.py)
+- [../uppi/services/policies/immobile_patch_policy.py](../uppi/services/policies/immobile_patch_policy.py)
 
-- синхронізує locatore/conduttore
-- синхронізує їхні адреси
+Short version:
 
-### `VisuraIngestService`
+- DB-clearable persistable fields write back clears
+- run-only fields clear only the current generation run
+- metadata, identity, visura/display fields reject `"-"`
 
-Що робить:
+Full matrix:
+[./validation_clear_policy_matrix.md](./validation_clear_policy_matrix.md)
 
-- шукає локальний PDF
-- рахує checksum
-- upload-ить PDF у storage
-- реєструє visura в БД
+## 7. Protected Invariants
 
-### `ImmobileSyncService`
+The rollout did not change:
 
-Що робить:
-
-- запускає parser
-- валідує parser output
-- записує immobili і пов'язані visura-address дані
-
-### `ContractSyncService`
-
-Що робить:
-
-- синхронізує real address
-- синхронізує immobile elements
-- upsert-ить contract
-- будує `contract_ctx`
-
-### `CanoneStageService`
-
-Що робить:
-
-- будує `CanoneInput`
-- запускає current calculation strategy
-- записує snapshot розрахунку в БД
-
-### `DocumentStageService`
-
-Що робить:
-
-- будує template params
-- генерує DOCX
-- upload-ить DOCX у storage
-- викликає audit
-
-### `AuditStageService`
-
-Що робить:
-
-- пише success/failed audit rows
-
-## 7. Де що відбувається
-
-### Читання input
-
-- [../uppi/domain/clients.py](../uppi/domain/clients.py)
-
-### Парсинг PDF
-
-- [../uppi/parsers/visura_pdf_parser.py](../uppi/parsers/visura_pdf_parser.py)
-
-### Робота з БД
-
-- [../uppi/services/repositories/](../uppi/services/repositories/)
-- compatibility facade:
-  [../uppi/services/db_repo.py](../uppi/services/db_repo.py)
-
-### Генерація документів
-
-- [../uppi/services/attestazione_generator.py](../uppi/services/attestazione_generator.py)
-- [../uppi/services/attestazione_template_filler.py](../uppi/services/attestazione_template_filler.py)
-
-### Upload / storage
-
-- [../uppi/domain/object_storage.py](../uppi/domain/object_storage.py)
-- [../uppi/services/storage_minio.py](../uppi/services/storage_minio.py)
-
-### Audit / failure reporting
-
-- [../uppi/services/repositories/audit_repo.py](../uppi/services/repositories/audit_repo.py)
-- [../uppi/services/failure_registry.py](../uppi/services/failure_registry.py)
-
-## 8. Failure handling в current code
-
-Що вже є:
-
-- typed domain exceptions
-- validation layer
-- failure registry
-- stage-level failure reporting
-- retry classification matrix
-
-Що ще не зроблено:
-
-- full retry engine
-- transaction-boundary redesign
-- compensating delete logic for artifacts
-
-Reference:
-
-- [./failure_registry_contract.md](./failure_registry_contract.md)
-- [./transaction_resource_safety_review.md](./transaction_resource_safety_review.md)
-
-## 9. Outputs і artifacts
-
-Current local artifacts:
-
-- `downloads/`
-- `captcha_images/`
-- local DOCX/PDF files
-- protected `state.json`
-
-Current remote artifacts:
-
-- visura PDF object
-- attestazione DOCX object
-
-Reference:
-
-- [./workspace_local_artifacts_policy.md](./workspace_local_artifacts_policy.md)
-
-## 10. Що не можна змінювати без high-risk review
-
-- browser flow
-- `state.json` lifecycle semantics
-- selector / wait / logout semantics
-- direct SISTER transition
+- AE/SISTER flow
+- `state.json` lifecycle
 - visura download flow
+- selector order
+- wait sequence
+- logout semantics
+- no-blind-retry rule for browser-critical stages
 
-Canonical source:
+Canonical docs:
 
 - [./refactor_protected_invariants.md](./refactor_protected_invariants.md)
+- [./state_json_lifecycle_contract.md](./state_json_lifecycle_contract.md)
+- [./live_smoke_strategy_ae_sister.md](./live_smoke_strategy_ae_sister.md)

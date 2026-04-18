@@ -1,7 +1,6 @@
 # UPPI Rollout Source of Truth
 
-Цей документ є canonical source of truth для rollout-контракту, який треба
-реалізувати до будь-яких runtime-змін у новій хвилі оновлення UPPI.
+Цей документ є canonical source of truth для finalized rollout-контракту UPPI.
 
 Він є нормативним для:
 
@@ -15,9 +14,9 @@
 пріоритет мають [./refactor_protected_invariants.md](./refactor_protected_invariants.md)
 і [./state_json_lifecycle_contract.md](./state_json_lifecycle_contract.md).
 
-Також важливо: цей документ фіксує цільовий контракт rollout. Окремі runtime
-docs можуть ще описувати поточну legacy-реалізацію до моменту фактичного
-впровадження.
+Поточний runtime уже має відповідати цьому документу. Operator-oriented usage
+див. у [./operator_workflow.md](./operator_workflow.md), а точну matrix для
+`"-"` див. у [./validation_clear_policy_matrix.md](./validation_clear_policy_matrix.md).
 
 ## 1. Three target modes
 
@@ -39,7 +38,7 @@ docs можуть ще описувати поточну legacy-реалізац
 
 ### `scrapy crawl uppi`
 
-- Є generation-focused mode.
+- Є generation-only mode.
 - Читає тільки already prepared single-client `immobili.yml`.
 - Не ходить у SISTER.
 - Не володіє fetch/update logic.
@@ -207,7 +206,19 @@ write-back clear у БД.
 Це стосується:
 
 - root persistable fields;
-- immobile persistable editable fields.
+- immobile override persistable fields;
+- `ENERGY_CLASS`;
+- `ARREDATO`;
+- `ISTAT`;
+- `IGNORE_SURCHARGES`;
+- `A/B/C/D`.
+
+Implementation-specific note:
+
+- `ARREDATO` and `ISTAT` clear to nullable DB state;
+- `IGNORE_SURCHARGES` clears to `False` because the current schema uses a
+  non-null boolean;
+- `CONTRACT_KIND` is persistable but not clear-allowed.
 
 ### Run-only clear
 
@@ -217,8 +228,9 @@ write-back clear у БД.
 
 - значення очищається тільки в in-memory generation context;
 - write-back у master DB state не відбувається;
-- якщо конкретний generation case не допускає порожнього значення, має бути
-  validation error до document stage.
+- значення не стає новим prepare default;
+- DOCX generation і calculation бачать blank current-run value, а не literal
+  `"-"`.
 
 ### Validation error groups
 
@@ -227,6 +239,22 @@ write-back clear у БД.
 - root metadata;
 - immobile identity fields;
 - visura display fields.
+
+Окремо:
+
+- `CONTRACT_KIND` є explicit forbidden clear target.
+
+### Active record identity requirement
+
+Для кожного active immobile record generation input повинен містити:
+
+- `FOGLIO`
+- `NUMERO`
+- `SUB`
+
+`SUB` must be present even when the cadastral sub is blank. If an active record
+does not carry full identity, generation must stop at validation time before
+strict DB matching.
 
 ## 5. Ownership and fallback rules
 
@@ -274,6 +302,11 @@ Canonical invariants already frozen in:
 ## 7. Related docs
 
 - ADR: [./adr_0001_single_client_immobili_contract.md](./adr_0001_single_client_immobili_contract.md)
+- Operator workflow: [./operator_workflow.md](./operator_workflow.md)
+- Validation / clear matrix:
+  [./validation_clear_policy_matrix.md](./validation_clear_policy_matrix.md)
+- Regression test map: [./regression_test_map.md](./regression_test_map.md)
+- Rollout-ready checklist: [./rollout_ready_checklist.md](./rollout_ready_checklist.md)
 - Detailed rollout plan:
   [./uppi_update_implementation_plan.md](./uppi_update_implementation_plan.md)
 - Practical step-by-step plan:

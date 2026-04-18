@@ -4,9 +4,11 @@
 
 Normative note:
 
+* status: цей файл тепер є historical execution-order artifact після завершення rollout
+* для current operator behavior треба читати [./operator_workflow.md](./operator_workflow.md), [./runtime_flow.md](./runtime_flow.md) і [./validation_clear_policy_matrix.md](./validation_clear_policy_matrix.md)
 * canonical source of truth для rollout-рішень зафіксовано в [./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md)
 * ADR-контекст див. у [./adr_0001_single_client_immobili_contract.md](./adr_0001_single_client_immobili_contract.md)
-* цей файл описує execution order і не є окремим нормативним контрактом
+* цей файл описує execution order і не є current behavioral contract
 
 ## Базові правила, які вважаємо вже зафіксованими
 

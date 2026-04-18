@@ -1,252 +1,131 @@
 # UPPI
 
-UPPI автоматизує отримання кадастрових виписок (`visura`) через AE/SISTER,
-обробляє їх у non-browser pipeline, записує дані в PostgreSQL, завантажує
-артефакти в object storage і генерує DOCX-документи `Attestazione`.
+UPPI працює у трьох окремих режимах:
 
-Цей `README.md` є головним entry point документації. Для поточної хвилі rollout
-цільовий контракт треба читати спочатку в
-[docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md),
-а вже потім у runtime та plan docs.
+- `prepare-by-CF`: вирішує, чи потрібен fetch/update, за потреби reuse-ить import-only browser path і генерує один single-client `immobili.yml`
+- `bulk-import-by-clients-csv`: масово проходить import-only path по списку CF і оновлює БД без generation
+- `scrapy crawl uppi`: generation-only command, який читає вже prepared `immobili.yml` і не ходить у SISTER
 
-## Rollout Source of Truth
-
-Для цього change wave canonical документами є:
-
-- [docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md)
-  Нормативний контракт для режимів `prepare`, bulk import і generation, shape
-  `immobili.yml`, field classification і clear semantics.
-- [docs/adr_0001_single_client_immobili_contract.md](docs/adr_0001_single_client_immobili_contract.md)
-  Коротке ADR з причинами відмови від multi-CF / flat-list input.
-
-Важливо:
-
-- ці документи описують rollout target contract;
-- частина runtime docs нижче все ще описує поточну legacy mixed-flow
-  реалізацію, доки runtime-зміни ще не внесені;
-- protected invariants для browser-critical зон лишаються без змін.
-
-## Що робить проєкт
-
-Проєкт має дві великі частини:
-
-- browser-critical flow:
-  логін у AE, direct SISTER transition, CAPTCHA, завантаження PDF, explicit logout
-- non-browser pipeline:
-  парсинг PDF, синхронізація даних у БД, розрахунок canone, генерація DOCX,
-  upload у storage, audit і failure reporting
-
-Важливо:
-
-- browser-critical semantics захищені окремими invariants
-- `state.json` має protected lifecycle contract
-- structural refactor уже зроблено, але browser flow навмисно не redesign-ився
-
-## Як виглядає current runtime flow
-
-Нижче описана поточна реалізація, а не rollout target contract. Для нового
-single-client `immobili.yml`, ролі `prepare`, bulk import і generation див.
+Canonical behavioral contract зафіксований у
 [docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md).
 
-Коротко один run проходить так:
+## What Changed
 
-1. Spider стартує fresh session, чистить старий `state.json` і `captcha_images/`.
-2. Завантажуються клієнти з `clients.yml`.
-3. Для кожного клієнта вирішується, чи треба реально йти в SISTER, чи можна
-   використати current DB/storage state.
-4. Якщо потрібен browser path:
-   - логін у AE
-   - відкриття SISTER
-   - збереження `state.json`
-   - перехід до `Visure catastali`
-   - CAPTCHA path, якщо з’являється
-   - download PDF
-   - explicit logout
-5. Далі item потрапляє в non-browser pipeline:
-   - `PersonSync`
-   - `VisuraIngest`
-   - `ImmobileSync`
-   - `ContractSync`
-   - `CanoneStage`
-   - `DocumentStage`
-   - `AuditStage`
-6. Наприкінці outer orchestrator робить `commit()` і optional cleanup локального PDF.
+- `immobili.yml` тепер є canonical generation input і описує рівно одного клієнта у форматі `root fields + immobili: [...]`
+- `prepare-by-CF` став єдиним owner-ом fetch/update decision logic
+- `clients.csv` винесено в окремий bulk import-only mode
+- `scrapy crawl uppi` більше не є smart fetch/import runner
+- generation не має hidden fallback у SISTER: missing DB immobile дає hard fail з підказкою спочатку запустити prepare
+- field-level validation і `"-"` semantics централізовані для нового single-client contract
 
-Повний розбір:
-- [docs/runtime_flow.md](docs/runtime_flow.md)
+## Primary Commands
 
-## Архітектура коротко
+Prepare one client and write `immobili.yml`:
 
-Ключові шари:
+```bash
+venv/bin/python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z
+```
 
-- `uppi/spiders/`, `uppi/ae/`:
-  browser-critical orchestration і Playwright flow
-- `uppi/services/visura_processor.py`, `uppi/services/visura_stages.py`:
-  thin orchestrator і stage services
-- `uppi/services/repositories/`:
-  thin repository layer
-- `uppi/services/policies/`:
-  patch/business rules як pure functions
-- `uppi/services/validation/`:
-  warning-first validation layer
-- `uppi/domain/`:
-  models, DB/storage/config seams, calculation strategy, typed exceptions
-- `uppi/services/storage_minio.py`, `uppi/domain/object_storage.py`:
-  object storage boundary
-- `uppi/services/attestazione_generator.py`,
-  `uppi/services/attestazione_template_filler.py`:
-  document generation path
+Force visura refresh before generating YAML:
 
-Детально:
-- [docs/current_architecture.md](docs/current_architecture.md)
+```bash
+venv/bin/python -m uppi.cli.prepare_by_cf --cf RSSMRA80A01H501Z --force-update-visura
+```
 
-## З чого почати junior-розробнику
+Bulk import-only from `clients.csv`:
 
-Recommended reading order:
+```bash
+venv/bin/python -m uppi.cli.bulk_import_clients_csv --csv clients/clients.csv
+```
 
-1. [README.md](README.md)
-2. [Rollout source of truth](docs/immobili_rollout_source_of_truth.md)
-3. [ADR 0001](docs/adr_0001_single_client_immobili_contract.md)
-4. [Поточна архітектура](docs/current_architecture.md)
-5. [Current runtime flow](docs/runtime_flow.md)
-6. [Protected invariants](docs/refactor_protected_invariants.md)
-7. [Локальний запуск і тести](docs/local_development_and_testing.md)
-8. [Document generation](docs/document_generation.md)
-9. Reference docs за потреби:
-   - [Failure registry](docs/failure_registry_contract.md)
-   - [Transaction / resource safety](docs/transaction_resource_safety_review.md)
-   - [Workspace / local artifacts](docs/workspace_local_artifacts_policy.md)
-   - [state.json lifecycle](docs/state_json_lifecycle_contract.md)
-   - [AWS readiness](docs/aws_readiness_runtime_boundaries.md)
+Generation-only run from prepared YAML:
 
-## Карта документації
+```bash
+scrapy crawl uppi
+```
 
-### Rollout contract docs
+## Recommended Workflow
+
+For one client:
+
+1. Run `prepare-by-CF`.
+2. Review and edit the generated `immobili.yml`.
+3. Set `enabled: false` on any immobile you want to skip.
+4. Use `"-"` only on fields documented as clear-allowed.
+5. Run `scrapy crawl uppi`.
+
+For many clients:
+
+1. Run bulk CSV import-only mode to refresh DB state for all target CFs.
+2. For each client that needs generation, run `prepare-by-CF`.
+3. Review the generated YAML and then run `scrapy crawl uppi`.
+
+Recommended operator guide:
+[docs/operator_workflow.md](docs/operator_workflow.md).
+
+## Documentation Map
+
+Canonical contract and operator docs:
 
 - [docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md)
-  Canonical source of truth для нового rollout contract.
-- [docs/adr_0001_single_client_immobili_contract.md](docs/adr_0001_single_client_immobili_contract.md)
-  ADR про single-client YAML і generation boundary.
-- [docs/uppi_update_implementation_plan.md](docs/uppi_update_implementation_plan.md)
-  Детальний implementation plan, підпорядкований source-of-truth документу.
-- [docs/Uppi_Покроковий_План_Виконання.md](docs/Uppi_Покроковий_План_Виконання.md)
-  Практичний execution order, теж не є окремим normative contract.
+- [docs/operator_workflow.md](docs/operator_workflow.md)
+- [docs/validation_clear_policy_matrix.md](docs/validation_clear_policy_matrix.md)
 
-### Current operational docs
+Runtime and architecture:
 
-- [docs/current_architecture.md](docs/current_architecture.md)
-  Загальна карта шарів, boundaries і модулів.
 - [docs/runtime_flow.md](docs/runtime_flow.md)
-  Поточний implemented mixed runtime flow; legacy reference для rollout target.
+- [docs/current_architecture.md](docs/current_architecture.md)
 - [docs/local_development_and_testing.md](docs/local_development_and_testing.md)
-  Локальний запуск поточної реалізації; legacy config/input notes для rollout.
-- [docs/document_generation.md](docs/document_generation.md)
-  Як працює DOCX generation і де лежить canonical template-filler.
-- [docs/refactor_protected_invariants.md](docs/refactor_protected_invariants.md)
-  Що не можна міняти без high-risk review.
+
+Testing, smoke, rollout:
+
+- [docs/regression_test_map.md](docs/regression_test_map.md)
+- [docs/rollout_ready_checklist.md](docs/rollout_ready_checklist.md)
 - [docs/live_smoke_strategy_ae_sister.md](docs/live_smoke_strategy_ae_sister.md)
-  Canonical manual smoke checklist.
 
-### Reference architecture docs
+Protected invariants and reference docs:
 
-- [docs/failure_registry_contract.md](docs/failure_registry_contract.md)
-- [docs/transaction_resource_safety_review.md](docs/transaction_resource_safety_review.md)
-- [docs/workspace_local_artifacts_policy.md](docs/workspace_local_artifacts_policy.md)
+- [docs/refactor_protected_invariants.md](docs/refactor_protected_invariants.md)
 - [docs/state_json_lifecycle_contract.md](docs/state_json_lifecycle_contract.md)
-- [docs/aws_readiness_runtime_boundaries.md](docs/aws_readiness_runtime_boundaries.md)
-- [docs/logging_foundation.md](docs/logging_foundation.md)
-- [docs/compatibility_shim_migration_uppi_docs.md](docs/compatibility_shim_migration_uppi_docs.md)
+- [docs/document_generation.md](docs/document_generation.md)
+- [docs/failure_registry_contract.md](docs/failure_registry_contract.md)
 
-### Domain/source materials
+Historical planning artifacts:
 
-Це не operational docs, а reference materials:
+- [docs/uppi_update_implementation_plan.md](docs/uppi_update_implementation_plan.md)
+- [docs/Uppi_Покроковий_План_Виконання.md](docs/Uppi_Покроковий_План_Виконання.md)
+- [docs/archive/refactor_execution_plan_overview.md](docs/archive/refactor_execution_plan_overview.md)
 
-- [uppi/docs/accordo_pescara.md](uppi/docs/accordo_pescara.md)
-- [uppi/docs/accordo_pescara.pdf](uppi/docs/accordo_pescara.pdf)
-- [uppi/docs/accordo_pescara_ocr.pdf](uppi/docs/accordo_pescara_ocr.pdf)
-- [uppi/docs/pescara2018_summary.md](uppi/docs/pescara2018_summary.md)
+## Configuration Surface
 
-### Historical / archival docs
+Canonical generation input:
 
-Ці файли корисні для історії рефакторингу, але не є головними current guides:
+- `UPPI_IMMOBILI_YAML`
 
-- [Архів execution plans](docs/archive/refactor_execution_plan_overview.md)
-- [Sprint 1 planning artifact](docs/archive/refactor_execution_plan_sprint_1.md)
-- [Sprint 2 planning artifact](docs/archive/refactor_execution_plan_sprint_2.md)
-- [Sprint 3 planning artifact](docs/archive/refactor_execution_plan_sprint_3.md)
-- [Refactor risk register](docs/archive/refactor_risk_register.md)
-- [Sprint 2 architecture snapshot](docs/archive/sprint_2_architecture_state.md)
-- [Sprint 2 merge-readiness checklist](docs/archive/sprint_2_merge_readiness_checklist.md)
-- [Sprint 2 closeout note](docs/archive/sprint_2_closeout_note.md)
+Bulk CSV input:
 
-## Локальний запуск
+- `UPPI_CLIENTS_CSV`
 
-Швидкий старт:
+Legacy compatibility only:
 
-Для rollout-target режимів див.
-[docs/immobili_rollout_source_of_truth.md](docs/immobili_rollout_source_of_truth.md).
-Нижче лишається current implemented command surface до моменту runtime-змін.
+- `UPPI_CLIENTS_YAML`
+  This remains only as a transitional/internal source for the protected import spider path and is not the canonical generation contract.
 
-1. Створити `.env`
-2. Ініціалізувати БД:
-   `python uppi/utils/db_utils/init_db.py`
-3. Запустити spider:
-   `scrapy crawl uppi`
+## Testing
 
-Повна інструкція:
-- [docs/local_development_and_testing.md](docs/local_development_and_testing.md)
+Focused regression guidance lives in
+[docs/regression_test_map.md](docs/regression_test_map.md).
 
-## Тестування і verification
-
-Базова команда:
+Default full test command:
 
 ```bash
 venv/bin/python -m pytest -q
 ```
 
-Ключові suites:
+Rollout pre-flight and smoke checklist:
+[docs/rollout_ready_checklist.md](docs/rollout_ready_checklist.md).
 
-- parser baseline
-- DOCX baseline
-- golden-path pipeline integration
-- repo integration tests on temp Postgres
-- stage service tests
-- validation / failure reporting / retry policy tests
+## Live Smoke
 
-Коли потрібен live smoke:
-
-- будь-які зміни навколо browser-critical flow
-- будь-які зміни навколо `state.json`
-- будь-які зміни навколо end-to-end artifact paths/cleanup
-
-Checklist:
-- [docs/live_smoke_strategy_ae_sister.md](docs/live_smoke_strategy_ae_sister.md)
-
-## Troubleshooting: куди дивитися
-
-- Проблема з логіном, direct SISTER, logout, CAPTCHA, `state.json`:
-  [docs/refactor_protected_invariants.md](docs/refactor_protected_invariants.md),
-  [docs/state_json_lifecycle_contract.md](docs/state_json_lifecycle_contract.md)
-- Проблема з runtime flow:
-  [docs/runtime_flow.md](docs/runtime_flow.md)
-- Проблема з DB / storage / partial failures:
-  [docs/transaction_resource_safety_review.md](docs/transaction_resource_safety_review.md)
-- Проблема з DOCX generation:
-  [docs/document_generation.md](docs/document_generation.md)
-- Проблема з локальними артефактами:
-  [docs/workspace_local_artifacts_policy.md](docs/workspace_local_artifacts_policy.md)
-- Проблема з failure reporting / retry classification:
-  [docs/failure_registry_contract.md](docs/failure_registry_contract.md)
-
-## Важливі заборони
-
-Без окремого high-risk review не можна:
-
-- міняти AE/SISTER flow
-- міняти `state.json` lifecycle semantics
-- міняти selector order / wait / click / logout semantics
-- робити blind browser retry
-- робити transaction-boundary redesign під виглядом локального cleanup
-
-Canonical source:
-- [docs/refactor_protected_invariants.md](docs/refactor_protected_invariants.md)
+Live AE/SISTER smoke is only required when a change touches the protected browser/import reuse path or `state.json` lifecycle. The canonical checklist is
+[docs/live_smoke_strategy_ae_sister.md](docs/live_smoke_strategy_ae_sister.md).

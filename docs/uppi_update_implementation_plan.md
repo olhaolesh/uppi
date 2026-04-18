@@ -1,13 +1,18 @@
 # UPPI Update Implementation Plan
 
-Normative note:
+Status note:
 
+- цей файл є historical implementation plan після завершення rollout;
+- для current behavior треба читати
+  [./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md),
+  [./operator_workflow.md](./operator_workflow.md),
+  [./runtime_flow.md](./runtime_flow.md) і
+  [./validation_clear_policy_matrix.md](./validation_clear_policy_matrix.md);
 - canonical source of truth для rollout-рішень зафіксовано в
   [./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md);
 - ADR-контекст див. у
   [./adr_0001_single_client_immobili_contract.md](./adr_0001_single_client_immobili_contract.md);
-- цей файл лишається detailed implementation plan і не є окремим competing
-  contract.
+- цей файл лишається planning artifact і не є current behavioral reference.
 
 Цей документ є фінальним implementation plan для оновлення UPPI під нову
 операційну модель:

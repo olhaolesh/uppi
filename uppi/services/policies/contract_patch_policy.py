@@ -8,6 +8,7 @@ from typing import Any, Dict, Mapping
 
 from itemadapter import ItemAdapter
 
+from uppi.services.policies.immobili_generation_policy import is_clear_marker
 from uppi.utils.parse_utils import clean_str, parse_date, safe_float
 
 
@@ -73,6 +74,36 @@ def _resolve_ignore_surcharges(raw_ignore: Any, old_contract: Mapping[str, Any])
     return old_ignore
 
 
+def _resolve_generation_contract_kind(raw_kind: Any, old_contract: Mapping[str, Any]) -> tuple[str, bool]:
+    """Normalizes generation contract kind and rejects unsupported clear requests."""
+    if is_clear_marker(raw_kind):
+        raise ValueError("CONTRACT_KIND does not support '-' clear semantics during generation write-back.")
+
+    old_kind = clean_str(old_contract.get("contract_kind"))
+    kind_source = clean_str(raw_kind) or old_kind
+    return _resolve_contract_kind(kind_source)
+
+
+def _resolve_generation_nullable_numeric(raw_value: Any, old_value: Any) -> float | None:
+    """Resolves DB-clearable numeric fields for generation-only write-back."""
+    if is_clear_marker(raw_value):
+        return None
+    if raw_value is not None and str(raw_value).strip() != "":
+        return safe_float(raw_value) or 0.0
+    if old_value is None:
+        return None
+    return float(old_value)
+
+
+def _resolve_generation_ignore_surcharges(raw_ignore: Any, old_contract: Mapping[str, Any]) -> bool:
+    """Resolves DB-clearable boolean state for generation-only write-back."""
+    if is_clear_marker(raw_ignore):
+        return False
+    if raw_ignore is not None and str(raw_ignore).strip() != "":
+        return str(raw_ignore).lower() in ("true", "1", "yes", "y")
+    return bool(old_contract.get("ignore_surcharges")) if old_contract else False
+
+
 def build_contract_patch_decision(
     immobile_id: int,
     adapter: ItemAdapter,
@@ -118,22 +149,25 @@ def build_generation_contract_patch_decision(
     old_contract: Mapping[str, Any],
 ) -> ContractPatchDecision:
     """Build the generation-only DB write-back for persistable contract fields."""
-    raw_kind = clean_str(adapter.get("contract_kind"))
-    old_kind = clean_str(old_contract.get("contract_kind"))
-
-    kind_was_unknown = False
-    if raw_kind:
-        new_kind, kind_was_unknown = _resolve_contract_kind(raw_kind)
-    elif old_kind:
-        new_kind, _ = _resolve_contract_kind(old_kind)
-    else:
-        new_kind = "CONCORDATO"
+    new_kind, kind_was_unknown = _resolve_generation_contract_kind(
+        adapter.get("contract_kind"),
+        old_contract,
+    )
 
     params = {
         "immobile_id": immobile_id,
         "kind": new_kind,
-        "istat": _resolve_istat(adapter.get("istat"), old_contract),
-        "arredato": _resolve_arredato(adapter.get("arredato"), old_contract),
-        "ignore_surcharges": _resolve_ignore_surcharges(adapter.get("ignore_surcharges"), old_contract),
+        "istat": _resolve_generation_nullable_numeric(
+            adapter.get("istat"),
+            old_contract.get("istat_rate"),
+        ),
+        "arredato": _resolve_generation_nullable_numeric(
+            adapter.get("arredato"),
+            old_contract.get("arredato_pct"),
+        ),
+        "ignore_surcharges": _resolve_generation_ignore_surcharges(
+            adapter.get("ignore_surcharges"),
+            old_contract,
+        ),
     }
     return ContractPatchDecision(params=params, kind_was_unknown=kind_was_unknown)

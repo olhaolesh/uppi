@@ -261,6 +261,25 @@ def test_attestazione_generator_does_not_use_db_canone_as_run_only_default():
     assert params["{{CAN_MENSILE}}"] == ""
 
 
+def test_attestazione_generator_treats_run_only_clear_markers_as_blank_current_run_state():
+    """Run-only `-` must not leak into DOCX placeholders as a literal dash."""
+    params = build_template_params(
+        _make_adapter(
+            conduttore_cf="-",
+            decorrenza_data="-",
+            registrazione_num="-",
+            canone_contrattuale_mensile="-",
+        ),
+        _make_immobile(),
+        _make_contract_ctx(),
+    )
+
+    assert params["{{CONDUTTORE_CF}}"] == ""
+    assert params["{{DECORRENZA_DATA}}"] == ""
+    assert params["{{REGISTRAZIONE_NUM}}"] == ""
+    assert params["{{CAN_MENSILE}}"] == ""
+
+
 def test_attestazione_generator_known_current_behavior_ignore_surcharges_keeps_transitorio_text_but_excludes_it_from_var_range():
     """Перевіряє сценарій, описаний у назві тесту."""
     contract_ctx = {

@@ -10,10 +10,12 @@ from itemadapter import ItemAdapter
 from uppi.services.db_repo import (
     db_apply_immobile_elements,
     db_update_immobile_real_address,
+    db_upsert_generation_contract,
     db_upsert_contract,
     db_upsert_immobile_elements,
     resolve_patch_value,
 )
+from uppi.services.policies.contract_patch_policy import build_generation_contract_patch_decision
 
 
 def _normalize_sql(sql: str) -> str:
@@ -419,6 +421,50 @@ def test_contract_update_invalid_date_preserves_existing_date_values():
     assert params["start_date"] == date(2020, 1, 2)
     assert params["decorrenza"] == date(2020, 2, 3)
     assert params["reg_data"] == date(2020, 3, 4)
+
+
+def test_db_upsert_generation_contract_dash_markers_clear_nullable_fields_and_reset_boolean():
+    """Generation write-back must clear only the allowlisted persistable contract fields."""
+    old_contract = {
+        "id": "contract-9",
+        "contract_kind": "STUDENTI",
+        "istat_rate": 80.0,
+        "arredato_pct": 22.0,
+        "ignore_surcharges": True,
+    }
+    conn = RecordingConnection(fetchone_results=[old_contract])
+
+    returned_id = db_upsert_generation_contract(
+        conn,
+        immobile_id=1,
+        adapter=ItemAdapter(
+            {
+                "contract_kind": "TRANSITORIO",
+                "istat": "-",
+                "arredato": "-",
+                "ignore_surcharges": "-",
+                "conduttore_cf": "-",
+                "decorrenza_data": "-",
+            }
+        ),
+    )
+
+    assert returned_id == "contract-9"
+    params = _find_statement_params(conn, "UPDATE public.contracts SET")
+    assert params["kind"] == "TRANSITORIO"
+    assert params["istat"] is None
+    assert params["arredato"] is None
+    assert params["ignore_surcharges"] is False
+
+
+def test_build_generation_contract_patch_decision_rejects_contract_kind_clear_marker():
+    """CONTRACT_KIND clear is intentionally forbidden because generation has no safe null state there."""
+    with pytest.raises(ValueError):
+        build_generation_contract_patch_decision(
+            1,
+            ItemAdapter({"contract_kind": "-"}),
+            {"contract_kind": "CONCORDATO"},
+        )
 
 
 def test_contract_update_known_current_behavior_dash_is_not_delete_marker_for_plain_text_fields():

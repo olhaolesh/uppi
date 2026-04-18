@@ -39,7 +39,7 @@ import-runner-ом, і generation-runner-ом.
 
 - `prepare-by-codice-fiscale` володіє fetch/update logic.
 - `bulk-import-by-clients-csv` лишається import-only.
-- `scrapy crawl uppi` стає generation-focused mode.
+- `scrapy crawl uppi` стає generation-only mode.
 - Generation mode не має hidden fallback у SISTER і hard-fail-ить, якщо
   потрібного immobile немає в БД.
 

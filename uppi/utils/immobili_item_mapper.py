@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from uppi.config.immobili import ImmobileConfig, ImmobiliDocumentConfig
+from uppi.services.policies.immobili_generation_policy import normalize_run_only_item_value
 
 
 ELEMENT_KEYS = (
@@ -74,4 +75,7 @@ def map_immobili_document_to_item(
     if extra:
         mapped["extra"] = extra
 
-    return mapped
+    return {
+        field_name: normalize_run_only_item_value(field_name, value)
+        for field_name, value in mapped.items()
+    }

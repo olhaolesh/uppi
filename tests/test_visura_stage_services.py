@@ -345,6 +345,71 @@ def test_contract_sync_service_preserves_current_real_address_elements_contract_
     ]
 
 
+def test_contract_sync_service_supports_db_clear_for_root_and_immobile_persistable_fields(monkeypatch):
+    """Persistable clear markers must write explicit clears back to the DB surface."""
+    calls: list[tuple] = []
+
+    monkeypatch.setattr(
+        stage_module,
+        "db_load_prepare_document_root",
+        lambda conn, owner_cf: SimpleNamespace(
+            locatore_comune_res="Pescara",
+            locatore_via="Via Roma",
+            locatore_civico="10",
+        ),
+    )
+    monkeypatch.setattr(stage_module, "db_upsert_address", lambda conn, payload: 999)
+    monkeypatch.setattr(
+        stage_module,
+        "db_update_person_residence_address",
+        lambda conn, cf, address_id: calls.append(("root_clear", cf, address_id)),
+    )
+    monkeypatch.setattr(
+        stage_module,
+        "db_update_immobile_real_address",
+        lambda conn, immobile_id, *, real_address_id, energy_class, clear_real_address: calls.append(
+            ("immobile_clear", immobile_id, real_address_id, energy_class, clear_real_address)
+        ),
+    )
+    monkeypatch.setattr(stage_module, "db_apply_immobile_elements", lambda conn, immobile_id, adapter: calls.append(("elements", immobile_id)))
+    monkeypatch.setattr(stage_module, "db_upsert_generation_contract", lambda conn, immobile_id, adapter: 71)
+    monkeypatch.setattr(stage_module, "db_load_contract_context", lambda conn, contract_id: {"contract": {"id": contract_id}})
+
+    result = ContractSyncService().sync(
+        object(),
+        ItemAdapter(
+            {
+                "locatore_comune_res": "-",
+                "locatore_via": "-",
+                "locatore_civico": "-",
+                "immobile_comune": "-",
+                "immobile_via": "-",
+                "immobile_civico": "-",
+                "immobile_piano": "-",
+                "immobile_interno": "-",
+                "energy_class": "-",
+            }
+        ),
+        run_id="run-1",
+        client_cf="RSSMRA80A01H501Z",
+        immobile_id=41,
+        imm=Immobile(
+            immobile_comune_override="Pescara",
+            immobile_via_override="Via Old",
+            immobile_civico_override="9",
+            immobile_piano_override="1",
+            immobile_interno_override="2",
+        ),
+    )
+
+    assert result.contract_id == 71
+    assert calls == [
+        ("root_clear", "RSSMRA80A01H501Z", None),
+        ("immobile_clear", 41, None, "-", True),
+        ("elements", 41),
+    ]
+
+
 def test_canone_stage_service_preserves_current_insert_then_reload_contract_context(monkeypatch):
     """Перевіряє сценарій, описаний у назві тесту."""
     calls: list[tuple] = []

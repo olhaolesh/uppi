@@ -25,6 +25,7 @@ from uppi.services.db_repo import (
     db_load_immobile_by_identity,
     db_load_contract_context,
     db_load_immobili,
+    db_update_person_residence_address,
     db_update_immobile_real_address,
     db_upsert_address,
     db_upsert_generation_contract,
@@ -598,6 +599,115 @@ def test_db_upsert_generation_contract_persists_only_allowlisted_fields_on_temp_
     assert float(row["istat_rate"]) == 2.5
     assert float(row["arredato_pct"]) == 0.25
     assert row["ignore_surcharges"] is False
+
+
+def test_generation_persistable_clear_markers_write_back_only_to_allowed_db_fields_on_temp_postgres(pg_conn):
+    """Persistable clear markers must clear DB state without promoting run-only clears to master defaults."""
+    owner_cf, owner_addr_id = _seed_owner(pg_conn)
+    cond_addr_id = db_upsert_address(
+        pg_conn,
+        {"comune": "Pescara", "via_full": "Via Conduttore", "civico": "20"},
+    )
+    db_upsert_person(pg_conn, "BNCMRA80A01H501Z", surname="Bianchi", name="Mario", address_id=cond_addr_id)
+
+    visura_addr_id = db_upsert_address(
+        pg_conn,
+        {"comune": "Pescara", "via_full": "Corso Roma", "civico": "12"},
+    )
+    real_addr_id = db_upsert_address(
+        pg_conn,
+        {"comune": "Montesilvano", "via_full": "Via Milano", "civico": "8", "piano": "3", "interno": "4"},
+    )
+    immobile_id = db_upsert_immobile(
+        pg_conn,
+        owner_cf,
+        _make_immobile(sub="", energy_class="B"),
+        visura_addr_id=visura_addr_id,
+        source_visura_id=None,
+    )
+    db_update_immobile_real_address(
+        pg_conn,
+        immobile_id,
+        real_address_id=real_addr_id,
+        energy_class="B",
+    )
+    db_apply_immobile_elements(pg_conn, immobile_id, ItemAdapter({"a1": "X"}))
+    contract_id = db_upsert_contract(
+        pg_conn,
+        immobile_id,
+        ItemAdapter(
+            {
+                "conduttore_cf": "BNCMRA80A01H501Z",
+                "contract_kind": "STUDENTI",
+                "registrazione_num": "REG-123",
+                "istat": "2.5",
+                "arredato": "0.25",
+                "ignore_surcharges": "yes",
+            }
+        ),
+    )
+    pg_conn.commit()
+
+    db_update_person_residence_address(pg_conn, owner_cf, None)
+    db_update_immobile_real_address(
+        pg_conn,
+        immobile_id,
+        real_address_id=None,
+        energy_class="-",
+        clear_real_address=True,
+    )
+    db_apply_immobile_elements(pg_conn, immobile_id, ItemAdapter({"a1": "-"}))
+    db_upsert_generation_contract(
+        pg_conn,
+        immobile_id,
+        ItemAdapter(
+            {
+                "contract_kind": "TRANSITORIO",
+                "istat": "-",
+                "arredato": "-",
+                "ignore_surcharges": "-",
+                "conduttore_cf": "-",
+                "registrazione_num": "-",
+            }
+        ),
+    )
+    pg_conn.commit()
+
+    owner_row = _fetchone_dict(
+        pg_conn,
+        "SELECT residence_address_id FROM public.persons WHERE cf = %s;",
+        (owner_cf,),
+    )
+    immobile_row = _fetchone_dict(
+        pg_conn,
+        "SELECT real_address_id, energy_class FROM public.immobili WHERE id = %s;",
+        (immobile_id,),
+    )
+    element_rows = _fetchall_dicts(
+        pg_conn,
+        "SELECT grp, code, value FROM public.immobile_elements WHERE immobile_id = %s;",
+        (immobile_id,),
+    )
+    contract_row = _fetchone_dict(
+        pg_conn,
+        """
+        SELECT id, conduttore_cf, contract_kind, registrazione_num, istat_rate, arredato_pct, ignore_surcharges
+        FROM public.contracts
+        WHERE id = %s;
+        """,
+        (contract_id,),
+    )
+
+    assert owner_row["residence_address_id"] is None
+    assert immobile_row["real_address_id"] is None
+    assert immobile_row["energy_class"] is None
+    assert element_rows == []
+    assert contract_row["contract_kind"] == "TRANSITORIO"
+    assert contract_row["conduttore_cf"] == "BNCMRA80A01H501Z"
+    assert contract_row["registrazione_num"] == "REG-123"
+    assert contract_row["istat_rate"] is None
+    assert contract_row["arredato_pct"] is None
+    assert contract_row["ignore_surcharges"] is False
 
 
 def test_db_load_contract_context_returns_current_joined_shape_on_temp_postgres(pg_conn):

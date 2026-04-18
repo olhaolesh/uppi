@@ -1,205 +1,194 @@
-# Поточна архітектура
+# Current Architecture
 
-Це головний current architecture guide для проєкту.
-Якщо вам треба зрозуміти, як код влаштований сьогодні, читайте цей документ,
-а не historical sprint-plan файли.
+Це головний current architecture guide для кодової бази після rollout split.
 
-## Для чого цей проєкт
+Behavioral contract:
+[./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md)
 
-UPPI автоматизує повний ланцюжок:
+Runtime sequencing:
+[./runtime_flow.md](./runtime_flow.md)
 
-- читання вхідних даних про клієнтів
-- отримання `visura` через AE/SISTER
-- парсинг PDF
-- запис нормалізованих даних у PostgreSQL
-- розрахунок canone
-- генерацію DOCX `Attestazione`
-- upload артефактів у object storage
-- audit і failure reporting
+## 1. High-Level Split
 
-## Високорівневий поділ системи
+### 1. Generation-only production path
 
-### 1. Browser-critical зона
-
-Код:
+Code:
 
 - [../uppi/spiders/uppi_spider.py](../uppi/spiders/uppi_spider.py)
-- [../uppi/ae/auth.py](../uppi/ae/auth.py)
-- [../uppi/ae/sister_navigation.py](../uppi/ae/sister_navigation.py)
-- [../uppi/ae/captcha.py](../uppi/ae/captcha.py)
-- [../uppi/ae/download.py](../uppi/ae/download.py)
-- [../uppi/settings.py](../uppi/settings.py)
-
-Відповідальність:
-
-- fresh session start
-- login у AE
-- direct SISTER transition
-- CAPTCHA path
-- visura download
-- explicit logout
-- protected `state.json` lifecycle
-
-Цю зону не можна змінювати без high-risk review.
-
-Reference:
-- [./refactor_protected_invariants.md](./refactor_protected_invariants.md)
-- [./state_json_lifecycle_contract.md](./state_json_lifecycle_contract.md)
-
-### 2. Orchestration layer
-
-Код:
-
+- [../uppi/domain/immobili_document.py](../uppi/domain/immobili_document.py)
+- [../uppi/utils/immobili_item_mapper.py](../uppi/utils/immobili_item_mapper.py)
+- [../uppi/pipelines.py](../uppi/pipelines.py)
 - [../uppi/services/visura_processor.py](../uppi/services/visura_processor.py)
 - [../uppi/services/visura_stages.py](../uppi/services/visura_stages.py)
 
-Відповідальність:
+Responsibility:
 
-- взяти item після browser/download phase
-- відкрити outer DB connection
-- пройти non-browser stage order
-- виконати outer `commit` / `rollback` / `close`
+- load prepared single-client `immobili.yml`
+- validate it
+- process only active immobili
+- perform strict DB match
+- run calculation / document / audit stages
 
-`VisuraProcessor` сьогодні є thin orchestrator.
-Основна робота винесена в stage services.
+It does not:
 
-### 3. Repository layer
+- login to AE/SISTER
+- decide whether refresh is needed
+- call the browser/import path
 
-Код:
+### 2. Import-only browser path
 
-- [../uppi/services/repositories/address_repo.py](../uppi/services/repositories/address_repo.py)
-- [../uppi/services/repositories/person_repo.py](../uppi/services/repositories/person_repo.py)
-- [../uppi/services/repositories/visura_repo.py](../uppi/services/repositories/visura_repo.py)
-- [../uppi/services/repositories/immobile_repo.py](../uppi/services/repositories/immobile_repo.py)
-- [../uppi/services/repositories/contract_repo.py](../uppi/services/repositories/contract_repo.py)
-- [../uppi/services/repositories/audit_repo.py](../uppi/services/repositories/audit_repo.py)
-- compatibility facade: [../uppi/services/db_repo.py](../uppi/services/db_repo.py)
+Code:
 
-Відповідальність:
+- [../uppi/spiders/uppi_browser_spider.py](../uppi/spiders/uppi_browser_spider.py)
+- [../uppi/spiders/uppi_import_spider.py](../uppi/spiders/uppi_import_spider.py)
+- [../uppi/services/import_only_runner.py](../uppi/services/import_only_runner.py)
+- [../uppi/services/visura_processor.py](../uppi/services/visura_processor.py)
 
-- SQL
-- read/write shape
-- joined context loading
-- persistence contract
+Responsibility:
 
-Repository layer не повинен містити розмазану business semantics.
+- protected AE/SISTER login and navigation
+- CAPTCHA handling
+- visura download
+- import-only non-browser boundary up to `ImmobileSync`
 
-### 4. Policy layer
+It is reused by:
 
-Код:
+- `prepare-by-CF`
+- bulk CSV import-only mode
 
-- [../uppi/services/policies/patch_policy.py](../uppi/services/policies/patch_policy.py)
+### 3. Prepare orchestration
+
+Code:
+
+- [../uppi/cli/prepare_by_cf.py](../uppi/cli/prepare_by_cf.py)
+- [../uppi/services/prepare_by_cf.py](../uppi/services/prepare_by_cf.py)
+- [../uppi/services/immobili_yaml_generator.py](../uppi/services/immobili_yaml_generator.py)
+
+Responsibility:
+
+- own fetch/update decision logic
+- decide DB hit vs import refresh
+- generate one canonical `immobili.yml`
+
+### 4. Bulk CSV orchestration
+
+Code:
+
+- [../uppi/cli/bulk_import_clients_csv.py](../uppi/cli/bulk_import_clients_csv.py)
+- [../uppi/services/bulk_import_clients_csv.py](../uppi/services/bulk_import_clients_csv.py)
+- [../uppi/domain/clients_csv.py](../uppi/domain/clients_csv.py)
+
+Responsibility:
+
+- load CSV
+- normalize and dedupe CF
+- reuse import-only runner
+- report results
+
+### 5. DB-driven YAML generator
+
+Code:
+
+- [../uppi/services/immobili_yaml_generator.py](../uppi/services/immobili_yaml_generator.py)
+- [../uppi/services/repositories/prepare_document_repo.py](../uppi/services/repositories/prepare_document_repo.py)
+
+Responsibility:
+
+- read one client from DB
+- build a deterministic single-client document
+- serialize canonical `immobili.yml`
+
+### 6. Validation and policy layer
+
+Code:
+
+- [../uppi/services/validation/](../uppi/services/validation/)
+- [../uppi/services/policies/immobili_generation_policy.py](../uppi/services/policies/immobili_generation_policy.py)
 - [../uppi/services/policies/contract_patch_policy.py](../uppi/services/policies/contract_patch_policy.py)
 - [../uppi/services/policies/immobile_patch_policy.py](../uppi/services/policies/immobile_patch_policy.py)
 
-Відповідальність:
+Responsibility:
 
-- smart patch logic
-- delete-on-`"-"` semantics
-- fallback/default business rules
+- canonical YAML validation
+- field-class policy
+- `"-"` semantics
+- persistable-only write-back rules
 
-Це pure-function layer без SQL.
+### 7. Repository layer
 
-### 5. Validation та exceptions
+Code:
 
-Код:
+- [../uppi/services/repositories/](../uppi/services/repositories/)
+- compatibility facade: [../uppi/services/db_repo.py](../uppi/services/db_repo.py)
 
-- [../uppi/services/validation/](../uppi/services/validation/)
-- [../uppi/domain/exceptions.py](../uppi/domain/exceptions.py)
+Responsibility:
 
-Відповідальність:
+- SQL
+- joined read models
+- persistence contracts
 
-- warning-first validation
-- hard-fail лише для clearly invalid structural contracts
-- typed domain exceptions для non-browser service surface
+Repositories should not own orchestration decisions.
 
-### 6. Failure handling / retry classification
+## 2. Stage Boundaries
 
-Код:
+### Import-only boundary
 
-- [../uppi/domain/failure_registry.py](../uppi/domain/failure_registry.py)
-- [../uppi/services/failure_registry.py](../uppi/services/failure_registry.py)
-- [../uppi/services/retry_policy.py](../uppi/services/retry_policy.py)
-
-Відповідальність:
-
-- standardized failure records
-- stage-level failure reporting
-- retry classification matrix
-
-Немає full retry engine. Є тільки registry + policy surface.
-
-### 7. Config / DB / storage seams
-
-Код:
-
-- [../uppi/config/app_config.py](../uppi/config/app_config.py)
-- [../uppi/config/workspace.py](../uppi/config/workspace.py)
-- [../uppi/domain/db.py](../uppi/domain/db.py)
-- [../uppi/domain/object_storage.py](../uppi/domain/object_storage.py)
-- [../uppi/services/storage_minio.py](../uppi/services/storage_minio.py)
-
-Відповідальність:
-
-- env/default resolution
-- DB connection factory
-- object storage boundary
-- workspace/local artifact policy
-
-### 8. Document generation
-
-Код:
-
-- [../uppi/services/attestazione_generator.py](../uppi/services/attestazione_generator.py)
-- [../uppi/services/attestazione_template_filler.py](../uppi/services/attestazione_template_filler.py)
-- compatibility shim:
-  [../uppi/docs/attestazione_template_filler.py](../uppi/docs/attestazione_template_filler.py)
-
-Відповідальність:
-
-- побудова placeholder params
-- заповнення DOCX template
-- upload generated DOCX
-- audit log around generation result
-
-## Поточний non-browser stage order
-
-Для одного item порядок зараз такий:
+Stage order:
 
 1. `PersonSyncService`
 2. `VisuraIngestService`
 3. `ImmobileSyncService`
-4. `db_load_immobili()` + YAML-driven selection
-5. `ContractSyncService`
-6. `CanoneStageService`
-7. `DocumentStageService`
-8. `AuditStageService`
-9. outer `commit()`
-10. optional local PDF cleanup after commit
 
-Порядок важливий. Це не місце для casual “optimization”.
+Stop boundary:
 
-## Де шукати інформацію по задачах
+- after `ImmobileSync`
 
-- Треба зрозуміти runtime order:
-  [./runtime_flow.md](./runtime_flow.md)
-- Треба щось міняти у browser flow:
-  [./refactor_protected_invariants.md](./refactor_protected_invariants.md)
-- Треба зрозуміти `state.json`:
-  [./state_json_lifecycle_contract.md](./state_json_lifecycle_contract.md)
-- Треба зрозуміти local artifacts:
-  [./workspace_local_artifacts_policy.md](./workspace_local_artifacts_policy.md)
-- Треба зрозуміти transaction/partial failures:
-  [./transaction_resource_safety_review.md](./transaction_resource_safety_review.md)
-- Треба зрозуміти document generation:
-  [./document_generation.md](./document_generation.md)
-- Треба зрозуміти failure reporting і retry:
-  [./failure_registry_contract.md](./failure_registry_contract.md)
-- Треба зрозуміти AWS-readiness seams:
-  [./aws_readiness_runtime_boundaries.md](./aws_readiness_runtime_boundaries.md)
+### Generation-only boundary
 
-## Що вважати historical
+Stage order:
 
-Sprint/refactor execution plans і merge-closeout notes — це historical/planning
-artifacts. Вони корисні для історії змін, але не є головним описом поточної
-архітектури.
+1. strict DB identity match
+2. `ContractSyncService`
+3. `CanoneStageService`
+4. `DocumentStageService`
+5. `AuditStageService`
+
+Stop boundary:
+
+- after generation and outer commit
+
+## 3. Canonical Inputs
+
+Generation input:
+
+- canonical single-client `immobili.yml`
+- configured through `UPPI_IMMOBILI_YAML`
+
+Bulk input:
+
+- `clients.csv`
+- configured through `UPPI_CLIENTS_CSV`
+
+Legacy compatibility only:
+
+- flat `clients.yml`
+- configured through `UPPI_CLIENTS_YAML`
+- used only for the internal protected import spider path
+
+## 4. Protected Browser Invariants
+
+Browser-critical contracts remain protected and separate from the generation
+refactor.
+
+Canonical references:
+
+- [./refactor_protected_invariants.md](./refactor_protected_invariants.md)
+- [./state_json_lifecycle_contract.md](./state_json_lifecycle_contract.md)
+- [./live_smoke_strategy_ae_sister.md](./live_smoke_strategy_ae_sister.md)
+
+## 5. Related Guides
+
+- Runtime order: [./runtime_flow.md](./runtime_flow.md)
+- Operator usage: [./operator_workflow.md](./operator_workflow.md)
+- Validation policy: [./validation_clear_policy_matrix.md](./validation_clear_policy_matrix.md)
+- Local setup and tests: [./local_development_and_testing.md](./local_development_and_testing.md)

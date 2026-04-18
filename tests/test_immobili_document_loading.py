@@ -80,6 +80,36 @@ def test_load_immobili_document_rejects_legacy_flat_list_shape(tmp_path):
     assert exc_info.value.details["error_codes"] == ["immobili_document_not_mapping"]
 
 
+def test_load_immobili_document_rejects_forbidden_clear_targets(tmp_path):
+    """Field-level `-` policy violations must fail during canonical document loading."""
+    yaml_path = tmp_path / "immobili.yml"
+    yaml_path.write_text(
+        yaml.safe_dump(
+            {
+                "LOCATORE_CF": "RSSMRA80A01H501Z",
+                "immobili": [
+                    {
+                        "FOGLIO": "12",
+                        "NUMERO": "345",
+                        "SUB": "",
+                        "CONTRACT_KIND": "-",
+                    }
+                ],
+            },
+            sort_keys=False,
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(YamlInputValidationError) as exc_info:
+        immobili_document_module.load_immobili_document(path=yaml_path)
+
+    assert exc_info.value.details["error_codes"] == [
+        "immobili_document_forbidden_clear_non_clearable_persistable_field"
+    ]
+
+
 def test_uppi_immobili_yaml_env_override_controls_canonical_generation_source(monkeypatch, tmp_path):
     """Перевіряє сценарій, описаний у назві тесту."""
     override_path = tmp_path / "override-immobili.yml"

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from uppi.config.clients import ClientConfig
 from uppi.domain.canone_models import CanoneInput, ContractKind
 from uppi.services.validation import (
@@ -62,9 +64,129 @@ def test_validate_immobili_document_yaml_flags_root_vs_immobile_shape_mistakes()
     assert result.is_valid is False
     assert {issue.code for issue in result.errors} == {
         "immobili_document_root_contains_immobile_fields",
+        "immobili_document_active_item_missing_identity",
         "immobili_document_item_contains_root_fields",
         "immobili_document_item_not_mapping",
     }
+
+
+def test_validate_immobili_document_yaml_accepts_db_clearable_and_run_only_clear_markers():
+    """Persistable clear markers and run-only clear markers must stay valid policy inputs."""
+    result = validate_immobili_document_yaml(
+        {
+            "LOCATORE_CF": "ABCDEF12G34H567I",
+            "LOCATORE_COMUNE_RES": "-",
+            "LOCATORE_VIA": "-",
+            "LOCATORE_CIVICO": "-",
+            "immobili": [
+                {
+                    "FOGLIO": "12",
+                    "NUMERO": "345",
+                    "SUB": "",
+                    "IMMOBILE_COMUNE": "-",
+                    "IMMOBILE_VIA": "-",
+                    "IMMOBILE_CIVICO": "-",
+                    "IMMOBILE_PIANO": "-",
+                    "IMMOBILE_INTERNO": "-",
+                    "ENERGY_CLASS": "-",
+                    "ARREDATO": "-",
+                    "ISTAT": "-",
+                    "IGNORE_SURCHARGES": "-",
+                    "A1": "-",
+                    "CONDUTTORE_NOME": "-",
+                    "CONDUTTORE_CF": "-",
+                    "CONDUTTORE_COMUNE": "-",
+                    "CONDUTTORE_VIA": "-",
+                    "CONTRATTO_DATA": "-",
+                    "DECORRENZA_DATA": "-",
+                    "REGISTRAZIONE_DATA": "-",
+                    "REGISTRAZIONE_NUM": "-",
+                    "AGENZIA_ENTRATE_SEDE": "-",
+                    "CANONE_CONTRATTUALE_MENSILE": "-",
+                    "DURATA_ANNI": "-",
+                    "CUSTOM_EXTRA": "-",
+                }
+            ],
+        }
+    )
+
+    assert result.is_valid is True
+    assert result.errors == []
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_code", "expected_field"),
+    [
+        (
+            {"LOCATORE_CF": "-", "immobili": [{"FOGLIO": "12", "NUMERO": "345", "SUB": ""}]},
+            "immobili_document_forbidden_clear_root_metadata_field",
+            "LOCATORE_CF",
+        ),
+        (
+            {"LOCATORE_CF": "ABCDEF12G34H567I", "COMUNE": "-", "immobili": [{"FOGLIO": "12", "NUMERO": "345", "SUB": ""}]},
+            "immobili_document_forbidden_clear_root_metadata_field",
+            "COMUNE",
+        ),
+        (
+            {"LOCATORE_CF": "ABCDEF12G34H567I", "immobili": [{"FOGLIO": "-", "NUMERO": "345", "SUB": ""}]},
+            "immobili_document_forbidden_clear_identity_field",
+            "immobili[0].FOGLIO",
+        ),
+        (
+            {"LOCATORE_CF": "ABCDEF12G34H567I", "immobili": [{"FOGLIO": "12", "NUMERO": "345", "SUB": "-",}]},
+            "immobili_document_forbidden_clear_identity_field",
+            "immobili[0].SUB",
+        ),
+        (
+            {"LOCATORE_CF": "ABCDEF12G34H567I", "immobili": [{"FOGLIO": "12", "NUMERO": "345", "SUB": "", "VISURA_VIA": "-"}]},
+            "immobili_document_forbidden_clear_display_field",
+            "immobili[0].VISURA_VIA",
+        ),
+        (
+            {"LOCATORE_CF": "ABCDEF12G34H567I", "immobili": [{"FOGLIO": "12", "NUMERO": "345", "SUB": "", "CONTRACT_KIND": "-"}]},
+            "immobili_document_forbidden_clear_non_clearable_persistable_field",
+            "immobili[0].CONTRACT_KIND",
+        ),
+    ],
+)
+def test_validate_immobili_document_yaml_rejects_forbidden_clear_targets(payload, expected_code, expected_field):
+    """Forbidden `-` targets must fail early with precise operator-facing field paths."""
+    result = validate_immobili_document_yaml(payload)
+
+    assert result.is_valid is False
+    assert any(issue.code == expected_code and issue.field == expected_field for issue in result.errors)
+
+
+def test_validate_immobili_document_yaml_requires_complete_identity_for_active_records():
+    """Active generation records must carry FOGLIO, NUMERO and explicit SUB."""
+    result = validate_immobili_document_yaml(
+        {
+            "LOCATORE_CF": "ABCDEF12G34H567I",
+            "immobili": [
+                {"enabled": True, "NUMERO": "345"},
+                {"FOGLIO": "12", "SUB": ""},
+                {"FOGLIO": "12", "NUMERO": "345"},
+            ],
+        }
+    )
+
+    assert result.is_valid is False
+    assert [issue.code for issue in result.errors].count("immobili_document_active_item_missing_identity") == 4
+
+
+def test_validate_immobili_document_yaml_disabled_records_do_not_require_identity():
+    """Disabled records may stay in the document without strict-match identity fields."""
+    result = validate_immobili_document_yaml(
+        {
+            "LOCATORE_CF": "ABCDEF12G34H567I",
+            "immobili": [
+                {"enabled": False, "CONDUTTORE_CF": "-"},
+            ],
+        }
+    )
+
+    assert result.is_valid is True
+    assert result.errors == []
 
 
 def test_validate_client_config_warning_first_for_questionable_but_tolerated_values():
