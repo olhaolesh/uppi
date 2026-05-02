@@ -89,10 +89,6 @@ Current remote naming:
 Тепер canonical implementation живе в `uppi/services/`, але старий import path
 поки лишається working через thin shim.
 
-Migration note:
-
-- [./archive/compatibility_shim_migration_uppi_docs.md](./archive/compatibility_shim_migration_uppi_docs.md)
-
 ## 6. Baseline tests
 
 Основні guardrails:

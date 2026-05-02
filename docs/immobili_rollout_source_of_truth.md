@@ -301,14 +301,10 @@ Canonical invariants already frozen in:
 
 ## 7. Related docs
 
+- Web migration baseline: [./web_migration_baseline.md](./web_migration_baseline.md)
 - ADR: [./adr_0001_single_client_immobili_contract.md](./adr_0001_single_client_immobili_contract.md)
 - Operator workflow: [./operator_workflow.md](./operator_workflow.md)
 - Validation / clear matrix:
   [./validation_clear_policy_matrix.md](./validation_clear_policy_matrix.md)
 - Regression test map: [./regression_test_map.md](./regression_test_map.md)
 - Rollout-ready checklist: [./rollout_ready_checklist.md](./rollout_ready_checklist.md)
-- Historical archive: [./archive/README.md](./archive/README.md)
-- Detailed rollout plan:
-  [./archive/uppi_update_implementation_plan.md](./archive/uppi_update_implementation_plan.md)
-- Practical step-by-step plan:
-  [./archive/Uppi_Покроковий_План_Виконання.md](./archive/Uppi_Покроковий_План_Виконання.md)

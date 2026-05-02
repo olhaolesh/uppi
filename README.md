@@ -169,10 +169,6 @@ scrapy crawl uppi
 * [docs/document_generation.md](docs/document_generation.md)
 * [docs/failure_registry_contract.md](docs/failure_registry_contract.md)
 
-### Архів старих документів
-
-* [docs/archive/README.md](docs/archive/README.md)
-
 ## Налаштування через змінні середовища
 
 ### Основний YAML для генерації

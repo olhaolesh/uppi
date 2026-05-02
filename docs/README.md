@@ -3,11 +3,12 @@
 README at the repository root is the main entry point:
 [../README.md](../README.md).
 
-This index keeps the current documentation set small and separates current
-behavioral references from historical artifacts.
+This index lists only the current documentation set.
 
 ## Canonical Current Docs
 
+- Baseline freeze before web/API work:
+  [./web_migration_baseline.md](./web_migration_baseline.md)
 - Source of truth:
   [./immobili_rollout_source_of_truth.md](./immobili_rollout_source_of_truth.md)
 - Operator workflow:
@@ -18,6 +19,13 @@ behavioral references from historical artifacts.
   [./runtime_flow.md](./runtime_flow.md)
 - Current architecture:
   [./current_architecture.md](./current_architecture.md)
+- Web-service foundation ADR:
+  [./architecture_decisions/web_service_foundation.md](./architecture_decisions/web_service_foundation.md)
+
+## Web / AWS Planning Docs
+
+- [./2_Uppi_Aws_Implementation_Plan.md](./2_Uppi_Aws_Implementation_Plan.md)
+- [./3_Uppi_Aws_Provisioning_Checklist.md](./3_Uppi_Aws_Provisioning_Checklist.md)
 
 ## Operator-Facing Current Docs
 
@@ -30,7 +38,6 @@ behavioral references from historical artifacts.
 
 - [./local_development_and_testing.md](./local_development_and_testing.md)
 - [./regression_test_map.md](./regression_test_map.md)
-- [./web_migration_baseline.md](./web_migration_baseline.md)
 - [./document_generation.md](./document_generation.md)
 - [./failure_registry_contract.md](./failure_registry_contract.md)
 - [./refactor_protected_invariants.md](./refactor_protected_invariants.md)
@@ -39,16 +46,8 @@ behavioral references from historical artifacts.
 - [./logging_foundation.md](./logging_foundation.md)
 - [./transaction_resource_safety_review.md](./transaction_resource_safety_review.md)
 - [./workspace_local_artifacts_policy.md](./workspace_local_artifacts_policy.md)
-- [./adr_0001_single_client_immobili_contract.md](./adr_0001_single_client_immobili_contract.md)
 
 ## Architecture Decisions
 
 - [./adr_0001_single_client_immobili_contract.md](./adr_0001_single_client_immobili_contract.md)
 - [./architecture_decisions/web_service_foundation.md](./architecture_decisions/web_service_foundation.md)
-
-## Historical Archive
-
-Historical and non-normative planning artifacts live in
-[./archive/README.md](./archive/README.md).
-
-Do not use archived files as the current behavioral source of truth.
