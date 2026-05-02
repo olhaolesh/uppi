@@ -1,0 +1,42 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowListRelevantBuckets",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::{{VISURE_BUCKET}}",
+        "arn:aws:s3:::{{ATTESTAZIONI_BUCKET}}"
+      ],
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "visure/*",
+            "attestazioni/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "AllowVisureObjectReadWrite",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::{{VISURE_BUCKET}}/visure/*"
+    },
+    {
+      "Sid": "AllowAttestazioniObjectReadWrite",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::{{ATTESTAZIONI_BUCKET}}/attestazioni/*"
+    }
+  ]
+}

@@ -1,0 +1,220 @@
+{
+  "family": "{{TASK_FAMILY}}",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "{{TASK_CPU}}",
+  "memory": "{{TASK_MEMORY}}",
+  "runtimePlatform": {
+    "operatingSystemFamily": "LINUX",
+    "cpuArchitecture": "{{CPU_ARCHITECTURE}}"
+  },
+  "executionRoleArn": "arn:aws:iam::{{AWS_ACCOUNT_ID}}:role/{{TASK_EXECUTION_ROLE_NAME}}",
+  "taskRoleArn": "arn:aws:iam::{{AWS_ACCOUNT_ID}}:role/{{TASK_ROLE_NAME}}",
+  "ephemeralStorage": {
+    "sizeInGiB": "{{EPHEMERAL_STORAGE_GIB}}"
+  },
+  "containerDefinitions": [
+    {
+      "name": "uppi-backend",
+      "image": "{{ECR_IMAGE_URI}}",
+      "essential": true,
+      "readonlyRootFilesystem": false,
+      "portMappings": [
+        {
+          "name": "http",
+          "containerPort": 8000,
+          "hostPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "UPPI_WEB_APP_NAME",
+          "value": "{{UPPI_WEB_APP_NAME}}"
+        },
+        {
+          "name": "UPPI_WEB_APP_VERSION",
+          "value": "{{UPPI_WEB_APP_VERSION}}"
+        },
+        {
+          "name": "UPPI_WEB_ENV",
+          "value": "{{UPPI_WEB_ENV}}"
+        },
+        {
+          "name": "UPPI_WEB_DEBUG",
+          "value": "{{UPPI_WEB_DEBUG}}"
+        },
+        {
+          "name": "UPPI_WEB_SESSION_COOKIE_NAME",
+          "value": "{{UPPI_WEB_SESSION_COOKIE_NAME}}"
+        },
+        {
+          "name": "UPPI_WEB_SESSION_COOKIE_SECURE",
+          "value": "{{UPPI_WEB_SESSION_COOKIE_SECURE}}"
+        },
+        {
+          "name": "UPPI_WEB_SESSION_MAX_AGE_SECONDS",
+          "value": "{{UPPI_WEB_SESSION_MAX_AGE_SECONDS}}"
+        },
+        {
+          "name": "DB_PORT",
+          "value": "{{DB_PORT}}"
+        },
+        {
+          "name": "DB_NAME",
+          "value": "{{DB_NAME}}"
+        },
+        {
+          "name": "DB_SSL_MODE",
+          "value": "{{DB_SSL_MODE}}"
+        },
+        {
+          "name": "S3_ENDPOINT",
+          "value": "{{S3_ENDPOINT}}"
+        },
+        {
+          "name": "S3_SECURE",
+          "value": "{{S3_SECURE}}"
+        },
+        {
+          "name": "VISURE_BUCKET",
+          "value": "{{VISURE_BUCKET}}"
+        },
+        {
+          "name": "ATTESTAZIONI_BUCKET",
+          "value": "{{ATTESTAZIONI_BUCKET}}"
+        },
+        {
+          "name": "AE_LOGIN_URL",
+          "value": "{{AE_LOGIN_URL}}"
+        },
+        {
+          "name": "AE_URL_SERVIZI",
+          "value": "{{AE_URL_SERVIZI}}"
+        },
+        {
+          "name": "SISTER_VISURE_CATASTALI_URL",
+          "value": "{{SISTER_VISURE_CATASTALI_URL}}"
+        },
+        {
+          "name": "SISTER_LOGOUT_URL",
+          "value": "{{SISTER_LOGOUT_URL}}"
+        },
+        {
+          "name": "UPPI_WORKSPACE_ROOT",
+          "value": "/app"
+        },
+        {
+          "name": "UPPI_LOG_DIR",
+          "value": "/app/logs"
+        },
+        {
+          "name": "UPPI_LOG_FILE",
+          "value": "/app/logs/uppi.log"
+        },
+        {
+          "name": "UPPI_LOG_LEVEL",
+          "value": "{{UPPI_LOG_LEVEL}}"
+        },
+        {
+          "name": "UPPI_IMMOBILI_YAML",
+          "value": "/app/clients/immobili.yml"
+        },
+        {
+          "name": "UPPI_CLIENTS_CSV",
+          "value": "/app/clients/clients.csv"
+        },
+        {
+          "name": "UPPI_CLIENTS_YAML",
+          "value": "/app/clients/clients.yml"
+        },
+        {
+          "name": "TEMPLATE_VERSION",
+          "value": "{{TEMPLATE_VERSION}}"
+        },
+        {
+          "name": "PRUNE_OLD_IMMOBILI_WITHOUT_CONTRACTS",
+          "value": "{{PRUNE_OLD_IMMOBILI_WITHOUT_CONTRACTS}}"
+        },
+        {
+          "name": "DELETE_LOCAL_VISURA_AFTER_UPLOAD",
+          "value": "{{DELETE_LOCAL_VISURA_AFTER_UPLOAD}}"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "UPPI_WEB_AUTH_USERNAME",
+          "valueFrom": "{{SSM_UPPI_WEB_AUTH_USERNAME_PATH}}"
+        },
+        {
+          "name": "UPPI_WEB_AUTH_PASSWORD",
+          "valueFrom": "{{SSM_UPPI_WEB_AUTH_PASSWORD_PATH}}"
+        },
+        {
+          "name": "UPPI_WEB_AUTH_PIN",
+          "valueFrom": "{{SSM_UPPI_WEB_AUTH_PIN_PATH}}"
+        },
+        {
+          "name": "UPPI_WEB_SESSION_SECRET",
+          "valueFrom": "{{SSM_UPPI_WEB_SESSION_SECRET_PATH}}"
+        },
+        {
+          "name": "DB_HOST",
+          "valueFrom": "{{SSM_DB_HOST_PATH}}"
+        },
+        {
+          "name": "DB_USER",
+          "valueFrom": "{{SSM_DB_USER_PATH}}"
+        },
+        {
+          "name": "DB_PASSWORD",
+          "valueFrom": "{{SSM_DB_PASSWORD_PATH}}"
+        },
+        {
+          "name": "S3_ACCESS_KEY",
+          "valueFrom": "{{SSM_S3_ACCESS_KEY_PATH}}"
+        },
+        {
+          "name": "S3_SECRET_KEY",
+          "valueFrom": "{{SSM_S3_SECRET_KEY_PATH}}"
+        },
+        {
+          "name": "AE_USERNAME",
+          "valueFrom": "{{SSM_AE_USERNAME_PATH}}"
+        },
+        {
+          "name": "AE_PASSWORD",
+          "valueFrom": "{{SSM_AE_PASSWORD_PATH}}"
+        },
+        {
+          "name": "AE_PIN",
+          "valueFrom": "{{SSM_AE_PIN_PATH}}"
+        },
+        {
+          "name": "TWO_CAPTCHA_API_KEY",
+          "valueFrom": "{{SSM_TWO_CAPTCHA_API_KEY_PATH}}"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "{{CLOUDWATCH_LOG_GROUP}}",
+          "awslogs-region": "{{AWS_REGION}}",
+          "awslogs-stream-prefix": "backend"
+        }
+      },
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "python -c \"import sys, urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5); sys.exit(0 if response.status == 200 else 1)\""
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 15
+      }
+    }
+  ]
+}

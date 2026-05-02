@@ -45,6 +45,7 @@ This index lists only the current documentation set.
 - [./web_clients_bulk_import.md](./web_clients_bulk_import.md)
 - [./web_jobs_status_artifacts.md](./web_jobs_status_artifacts.md)
 - [./backend_containerization.md](./backend_containerization.md)
+- [./aws_deployment_scaffolding.md](./aws_deployment_scaffolding.md)
 - [./frontend_skeleton.md](./frontend_skeleton.md)
 - [./frontend_attestazione_integration.md](./frontend_attestazione_integration.md)
 - [./frontend_bulk_import_integration.md](./frontend_bulk_import_integration.md)
