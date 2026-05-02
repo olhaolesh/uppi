@@ -30,6 +30,7 @@ behavioral references from historical artifacts.
 
 - [./local_development_and_testing.md](./local_development_and_testing.md)
 - [./regression_test_map.md](./regression_test_map.md)
+- [./web_migration_baseline.md](./web_migration_baseline.md)
 - [./document_generation.md](./document_generation.md)
 - [./failure_registry_contract.md](./failure_registry_contract.md)
 - [./refactor_protected_invariants.md](./refactor_protected_invariants.md)
@@ -39,6 +40,11 @@ behavioral references from historical artifacts.
 - [./transaction_resource_safety_review.md](./transaction_resource_safety_review.md)
 - [./workspace_local_artifacts_policy.md](./workspace_local_artifacts_policy.md)
 - [./adr_0001_single_client_immobili_contract.md](./adr_0001_single_client_immobili_contract.md)
+
+## Architecture Decisions
+
+- [./adr_0001_single_client_immobili_contract.md](./adr_0001_single_client_immobili_contract.md)
+- [./architecture_decisions/web_service_foundation.md](./architecture_decisions/web_service_foundation.md)
 
 ## Historical Archive
 
