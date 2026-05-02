@@ -1,7 +1,7 @@
 # Web Backend Shell
 
-Цей документ описує тільки мінімальний FastAPI backend shell для Етапу 1
-web migration plan.
+Цей документ описує ізольований FastAPI backend shell, який став базою для
+Stage 1-4 additive web/API slices.
 
 Canonical references:
 
@@ -17,7 +17,8 @@ Canonical references:
 - публікує `GET /health/live` і `GET /health/ready`;
 - читає web-specific config з env-first dataclass;
 - має базовий cookie-based auth/session layer;
-- не імпортує і не запускає prepare/import/generation business flows.
+- додає protected web adapters для search/prepare і generation;
+- не дублює prepare/import/generation orchestration logic.
 
 ## Локальний запуск
 
@@ -36,10 +37,13 @@ Auth/session detail:
 
 - [./web_auth_session.md](./web_auth_session.md)
 
+Attestazioni detail:
+
+- [./web_attestazioni_search_prepare.md](./web_attestazioni_search_prepare.md)
+- [./web_attestazioni_generation.md](./web_attestazioni_generation.md)
+
 ## Чого цей shell ще не робить
 
-- немає search/prepare API
-- немає generation API
 - немає bulk import API
 - немає AWS integration
 - немає Docker/deployment foundation

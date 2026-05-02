@@ -41,6 +41,7 @@ This index lists only the current documentation set.
 - [./web_backend_shell.md](./web_backend_shell.md)
 - [./web_auth_session.md](./web_auth_session.md)
 - [./web_attestazioni_search_prepare.md](./web_attestazioni_search_prepare.md)
+- [./web_attestazioni_generation.md](./web_attestazioni_generation.md)
 - [./document_generation.md](./document_generation.md)
 - [./failure_registry_contract.md](./failure_registry_contract.md)
 - [./refactor_protected_invariants.md](./refactor_protected_invariants.md)

@@ -1,13 +1,19 @@
-"""Schemas for the Stage 3 attestazioni search/prepare web API."""
+"""Schemas for the Stage 3 and Stage 4 attestazioni web API."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from uppi.config.immobili import ELEMENT_KEYS
 
 if TYPE_CHECKING:
+    from uppi.web.services.generation_adapter import GeneratedRunResult
     from uppi.web.services.prepare_adapter import PreparedSearchResult
+
+
+ALLOWED_ELEMENT_KEYS = {element_key.lower() for element_key in ELEMENT_KEYS}
 
 
 def _blankable(value: Any) -> Any:
@@ -17,7 +23,20 @@ def _blankable(value: Any) -> Any:
     return value
 
 
-class AttestazioniSearchRequest(BaseModel):
+class _StrictWebModel(BaseModel):
+    """Base model for additive web DTOs that reject unknown fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _strip_strings(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class AttestazioniSearchRequest(_StrictWebModel):
     """Protected request payload for `POST /attestazioni/search`."""
 
     locatore_cf: str = Field(..., description="Codice fiscale del locatore.")
@@ -26,13 +45,11 @@ class AttestazioniSearchRequest(BaseModel):
     @field_validator("locatore_cf", mode="before")
     @classmethod
     def _normalize_locatore_cf(cls, value: Any) -> str:
-        """Trims and uppercases the incoming codice fiscale."""
         return str(value or "").strip().upper()
 
     @field_validator("locatore_cf")
     @classmethod
     def _validate_locatore_cf(cls, value: str) -> str:
-        """Applies the same lightweight CF format expectations as current prepare input."""
         if not value:
             raise ValueError("locatore_cf is required")
         if len(value) != 16 or not value.isalnum():
@@ -134,7 +151,6 @@ class AttestazioniSearchResponse(BaseModel):
 
     @classmethod
     def from_prepared_result(cls, result: "PreparedSearchResult") -> "AttestazioniSearchResponse":
-        """Builds the response DTO from the prepared search adapter result."""
         document = result.document
         immobili = list(document.immobili)
         return cls(
@@ -205,3 +221,199 @@ class AttestazioniSearchResponse(BaseModel):
             ],
             messages=list(result.messages),
         )
+
+
+class AttestazioniGenerateClientUpdates(_StrictWebModel):
+    """Allowed root-level editable fields for one generation web run."""
+
+    locatore_comune_res: str | None = None
+    locatore_via: str | None = None
+    locatore_civico: str | None = None
+
+
+class AttestazioniGenerateIdentity(_StrictWebModel):
+    """Immutable identity echo used to bind operator edits to prepared YAML rows."""
+
+    foglio: Any
+    numero: Any
+    sub: Any
+
+
+class AttestazioniGenerateEditable(_StrictWebModel):
+    """Allowed immobile-level persistable edits."""
+
+    immobile_comune: Any | None = None
+    immobile_via: Any | None = None
+    immobile_civico: Any | None = None
+    immobile_piano: Any | None = None
+    immobile_interno: Any | None = None
+    energy_class: Any | None = None
+    arredato: Any | None = None
+    istat: Any | None = None
+    ignore_surcharges: Any | None = None
+    contract_kind: Any | None = None
+
+
+class AttestazioniGenerateRunOnly(_StrictWebModel):
+    """Allowed run-only fields for one generation web run."""
+
+    conduttore_nome: Any | None = None
+    conduttore_cf: Any | None = None
+    conduttore_comune: Any | None = None
+    conduttore_via: Any | None = None
+    contratto_data: Any | None = None
+    decorrenza_data: Any | None = None
+    registrazione_data: Any | None = None
+    registrazione_num: Any | None = None
+    agenzia_entrate_sede: Any | None = None
+    canone_contrattuale_mensile: Any | None = None
+    durata_anni: Any | None = None
+
+
+class AttestazioniGenerateImmobileRequest(_StrictWebModel):
+    """One operator-edited immobile row sent to `POST /attestazioni/generate`."""
+
+    index: int = Field(..., ge=1)
+    enabled: bool = True
+    identity: AttestazioniGenerateIdentity
+    editable: AttestazioniGenerateEditable = Field(default_factory=AttestazioniGenerateEditable)
+    run_only: AttestazioniGenerateRunOnly = Field(default_factory=AttestazioniGenerateRunOnly)
+    elements: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("elements", mode="before")
+    @classmethod
+    def _normalize_elements(cls, value: Any) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("elements must be an object")
+        normalized: dict[str, Any] = {}
+        for raw_key, raw_value in value.items():
+            key = str(raw_key or "").strip().lower()
+            if key not in ALLOWED_ELEMENT_KEYS:
+                raise ValueError(f"Unsupported element key: {raw_key}")
+            normalized[key] = raw_value.strip() if isinstance(raw_value, str) else raw_value
+        return normalized
+
+
+class AttestazioniGenerateRequest(_StrictWebModel):
+    """Protected request payload for `POST /attestazioni/generate`."""
+
+    locatore_cf: str
+    prepared_immobili_yaml_path: str | None = None
+    client_updates: AttestazioniGenerateClientUpdates = Field(default_factory=AttestazioniGenerateClientUpdates)
+    immobili: list[AttestazioniGenerateImmobileRequest]
+
+    @field_validator("locatore_cf", mode="before")
+    @classmethod
+    def _normalize_locatore_cf(cls, value: Any) -> str:
+        return str(value or "").strip().upper()
+
+    @field_validator("locatore_cf")
+    @classmethod
+    def _validate_locatore_cf(cls, value: str) -> str:
+        if not value:
+            raise ValueError("locatore_cf is required")
+        if len(value) != 16 or not value.isalnum():
+            raise ValueError("locatore_cf must be a 16-character alphanumeric codice fiscale")
+        return value
+
+    @field_validator("prepared_immobili_yaml_path", mode="before")
+    @classmethod
+    def _normalize_prepared_yaml_path(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        raw = str(value).strip()
+        return raw or None
+
+    @model_validator(mode="after")
+    def _validate_selected_immobili(self) -> "AttestazioniGenerateRequest":
+        if not self.immobili:
+            raise ValueError("immobili must contain at least one requested row")
+        indexes = [entry.index for entry in self.immobili]
+        if len(set(indexes)) != len(indexes):
+            raise ValueError("immobili indexes must be unique")
+        if not any(entry.enabled for entry in self.immobili):
+            raise ValueError("at least one immobile must be enabled for generation")
+        return self
+
+
+class AttestazioniGenerationInputResponse(BaseModel):
+    """Safe references to prepared and generated YAML inputs."""
+
+    prepared_immobili_yaml_path: str
+    generation_immobili_yaml_path: str
+
+
+class AttestazioniGenerationSummaryResponse(BaseModel):
+    """Synchronous generation counters for the MVP response."""
+
+    requested_count: int
+    generated_count: int
+    failed_count: int
+
+
+class AttestazioniGenerationArtifactResponse(BaseModel):
+    """Safe synchronous artifact reference for one generated document."""
+
+    index: int
+    identity: AttestazioniImmobileIdentityResponse
+    kind: Literal["attestazione_docx"]
+    local_path: str | None
+    bucket: str | None
+    object_key: str | None
+    download_url: None = None
+
+
+class AttestazioniGenerateResponse(BaseModel):
+    """Protected synchronous response shape for `POST /attestazioni/generate`."""
+
+    status: Literal["generated"]
+    run_id: str
+    locatore_cf: str
+    input: AttestazioniGenerationInputResponse
+    summary: AttestazioniGenerationSummaryResponse
+    artifacts: list[AttestazioniGenerationArtifactResponse]
+    messages: list[str]
+
+    @classmethod
+    def from_generated_result(cls, result: "GeneratedRunResult") -> "AttestazioniGenerateResponse":
+        return cls(
+            status="generated",
+            run_id=result.run_id,
+            locatore_cf=result.locatore_cf,
+            input=AttestazioniGenerationInputResponse(
+                prepared_immobili_yaml_path=result.prepared_output_path_relative,
+                generation_immobili_yaml_path=result.generation_output_path_relative,
+            ),
+            summary=AttestazioniGenerationSummaryResponse(
+                requested_count=result.requested_count,
+                generated_count=result.generated_count,
+                failed_count=result.failed_count,
+            ),
+            artifacts=[
+                AttestazioniGenerationArtifactResponse(
+                    index=artifact.index,
+                    identity=AttestazioniImmobileIdentityResponse(
+                        foglio=_blankable(artifact.foglio),
+                        numero=_blankable(artifact.numero),
+                        sub=_blankable(artifact.sub),
+                    ),
+                    kind="attestazione_docx",
+                    local_path=artifact.local_path,
+                    bucket=artifact.bucket,
+                    object_key=artifact.object_key,
+                    download_url=None,
+                )
+                for artifact in result.artifacts
+            ],
+            messages=list(result.messages),
+        )
+
+
+__all__ = [
+    "AttestazioniGenerateRequest",
+    "AttestazioniGenerateResponse",
+    "AttestazioniSearchRequest",
+    "AttestazioniSearchResponse",
+]

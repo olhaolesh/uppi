@@ -52,8 +52,6 @@ auth credentials мають бути задані явно.
 
 ## Чого ще немає
 
-- немає search/prepare API
-- немає generation API
 - немає bulk import API
 - немає Docker/deployment foundation
 - немає AWS integration clients

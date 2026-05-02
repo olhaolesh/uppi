@@ -13,6 +13,7 @@ def create_app(
     config: WebAppConfig | None = None,
     *,
     prepare_search_adapter: object | None = None,
+    generation_adapter: object | None = None,
 ) -> FastAPI:
     """Builds the isolated FastAPI shell without importing business runtime flows."""
     resolved_config = config or WebAppConfig.from_env()
@@ -32,6 +33,8 @@ def create_app(
     )
     if prepare_search_adapter is not None:
         app.state.prepare_search_adapter = prepare_search_adapter
+    if generation_adapter is not None:
+        app.state.generation_adapter = generation_adapter
     app.include_router(api_router)
     return app
 

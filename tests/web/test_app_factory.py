@@ -43,6 +43,7 @@ def test_create_app_returns_fastapi_and_uses_explicit_config():
     assert built.state.web_config == cfg
     assert any(middleware.cls.__name__ == "SessionMiddleware" for middleware in built.user_middleware)
     assert {route.path for route in built.routes} >= {
+        "/attestazioni/generate",
         "/attestazioni/search",
         "/auth/login",
         "/auth/logout",
@@ -68,6 +69,7 @@ def test_web_shell_import_does_not_pull_business_runtime_modules():
         "uppi.ae.uppi_selectors",
         "uppi.services.prepare_by_cf",
         "uppi.services.bulk_import_clients_csv",
+        "uppi.services.generation_runner",
         "uppi.services.import_only_runner",
         "uppi.services.visura_processor",
         "uppi.services.visura_stages",
