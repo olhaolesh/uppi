@@ -43,6 +43,7 @@ def test_create_app_returns_fastapi_and_uses_explicit_config():
     assert built.state.web_config == cfg
     assert any(middleware.cls.__name__ == "SessionMiddleware" for middleware in built.user_middleware)
     assert {route.path for route in built.routes} >= {
+        "/attestazioni/search",
         "/auth/login",
         "/auth/logout",
         "/auth/me",

@@ -9,7 +9,11 @@ from uppi.web.api import api_router
 from uppi.web.config import WebAppConfig
 
 
-def create_app(config: WebAppConfig | None = None) -> FastAPI:
+def create_app(
+    config: WebAppConfig | None = None,
+    *,
+    prepare_search_adapter: object | None = None,
+) -> FastAPI:
     """Builds the isolated FastAPI shell without importing business runtime flows."""
     resolved_config = config or WebAppConfig.from_env()
     app = FastAPI(
@@ -26,6 +30,8 @@ def create_app(config: WebAppConfig | None = None) -> FastAPI:
         same_site=resolved_config.session.cookie_samesite,
         https_only=resolved_config.session.cookie_secure,
     )
+    if prepare_search_adapter is not None:
+        app.state.prepare_search_adapter = prepare_search_adapter
     app.include_router(api_router)
     return app
 
