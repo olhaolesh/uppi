@@ -1,0 +1,40 @@
+FROM mcr.microsoft.com/playwright/python:v1.55.0-noble
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    APP_HOME=/app
+
+WORKDIR /app
+
+COPY requirements.txt /app/requirements.txt
+
+RUN python -m pip install --upgrade pip \
+    && python -m pip install --no-cache-dir -r /app/requirements.txt
+
+RUN useradd --create-home --shell /bin/bash uppi
+
+COPY --chown=uppi:uppi scrapy.cfg /app/scrapy.cfg
+COPY --chown=uppi:uppi uppi /app/uppi
+COPY --chown=uppi:uppi attestazione_template /app/attestazione_template
+COPY --chown=uppi:uppi scripts/docker/start_backend.sh /app/scripts/docker/start_backend.sh
+
+RUN chmod +x /app/scripts/docker/start_backend.sh \
+    && mkdir -p \
+        /app/clients \
+        /app/clients/web_prepare \
+        /app/clients/web_generation \
+        /app/clients/web_bulk_import \
+        /app/clients/web_jobs \
+        /app/downloads \
+        /app/captcha_images \
+        /app/logs \
+    && chown -R uppi:uppi /app /home/uppi
+
+USER uppi
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD python -c "import sys, urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5); sys.exit(0 if response.status == 200 else 1)"
+
+CMD ["/app/scripts/docker/start_backend.sh"]
