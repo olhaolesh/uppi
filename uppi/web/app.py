@@ -12,6 +12,7 @@ from uppi.web.config import WebAppConfig
 def create_app(
     config: WebAppConfig | None = None,
     *,
+    bulk_import_adapter: object | None = None,
     prepare_search_adapter: object | None = None,
     generation_adapter: object | None = None,
 ) -> FastAPI:
@@ -31,6 +32,8 @@ def create_app(
         same_site=resolved_config.session.cookie_samesite,
         https_only=resolved_config.session.cookie_secure,
     )
+    if bulk_import_adapter is not None:
+        app.state.bulk_import_adapter = bulk_import_adapter
     if prepare_search_adapter is not None:
         app.state.prepare_search_adapter = prepare_search_adapter
     if generation_adapter is not None:

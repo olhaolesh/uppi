@@ -27,6 +27,7 @@ class BulkImportItemResult:
     normalized_locatore_cf: str | None
     status: str
     message: str
+    code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,7 @@ class BulkImportClientsCsvService:
                     normalized_locatore_cf=None,
                     status=BULK_IMPORT_STATUS_SKIPPED_INVALID,
                     message=invalid_row.message,
+                    code=invalid_row.code,
                 )
             )
 
@@ -106,6 +108,7 @@ class BulkImportClientsCsvService:
                         normalized_locatore_cf=None,
                         status=BULK_IMPORT_STATUS_SKIPPED_INVALID,
                         message=f"Row {row.row_number} has an invalid Codice Fiscale value.",
+                        code="invalid_locatore_cf",
                     )
                 )
                 continue
@@ -122,6 +125,7 @@ class BulkImportClientsCsvService:
                         message=(
                             f"Duplicate LOCATORE_CF skipped; first occurrence was row {seen_cf_rows[normalized_cf]}."
                         ),
+                        code="duplicate_locatore_cf",
                     )
                 )
                 continue
@@ -150,6 +154,7 @@ class BulkImportClientsCsvService:
                         normalized_locatore_cf=normalized_cf,
                         status=BULK_IMPORT_STATUS_FAILED,
                         message=str(exc),
+                        code="import_only_runner_failed",
                     )
                 )
                 if fail_fast:
@@ -164,6 +169,7 @@ class BulkImportClientsCsvService:
                         normalized_locatore_cf=normalized_cf,
                         status=BULK_IMPORT_STATUS_FAILED,
                         message=f"Unexpected import-only runner failure: {exc}",
+                        code="unexpected_import_only_runner_failure",
                     )
                 )
                 if fail_fast:
@@ -178,6 +184,7 @@ class BulkImportClientsCsvService:
                         normalized_locatore_cf=normalized_cf,
                         status=BULK_IMPORT_STATUS_IMPORTED,
                         message="Import-only runner completed successfully.",
+                        code="imported",
                     )
                 )
 

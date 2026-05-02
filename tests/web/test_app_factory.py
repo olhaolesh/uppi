@@ -45,6 +45,7 @@ def test_create_app_returns_fastapi_and_uses_explicit_config():
     assert {route.path for route in built.routes} >= {
         "/attestazioni/generate",
         "/attestazioni/search",
+        "/clients/bulk-import",
         "/auth/login",
         "/auth/logout",
         "/auth/me",

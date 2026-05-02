@@ -42,9 +42,12 @@ Attestazioni detail:
 - [./web_attestazioni_search_prepare.md](./web_attestazioni_search_prepare.md)
 - [./web_attestazioni_generation.md](./web_attestazioni_generation.md)
 
+Bulk import detail:
+
+- [./web_clients_bulk_import.md](./web_clients_bulk_import.md)
+
 ## Чого цей shell ще не робить
 
-- немає bulk import API
 - немає AWS integration
 - немає Docker/deployment foundation
 - не чіпає AE/SISTER/browser flow

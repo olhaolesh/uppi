@@ -7,6 +7,7 @@ from .attestazioni import (
     AttestazioniSearchResponse,
 )
 from .auth import AuthStatusResponse, AuthenticatedUser, LoginRequest, LogoutResponse
+from .clients import ClientsBulkImportRequest, ClientsBulkImportResponse
 from .health import HealthStatusResponse
 
 __all__ = [
@@ -16,6 +17,8 @@ __all__ = [
     "AttestazioniSearchResponse",
     "AuthStatusResponse",
     "AuthenticatedUser",
+    "ClientsBulkImportRequest",
+    "ClientsBulkImportResponse",
     "HealthStatusResponse",
     "LoginRequest",
     "LogoutResponse",
