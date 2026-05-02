@@ -154,6 +154,7 @@ scrapy crawl uppi
 * [docs/current_architecture.md](docs/current_architecture.md)
 * [docs/web_migration_baseline.md](docs/web_migration_baseline.md)
 * [docs/architecture_decisions/web_service_foundation.md](docs/architecture_decisions/web_service_foundation.md)
+* [docs/web_backend_shell.md](docs/web_backend_shell.md)
 * [docs/local_development_and_testing.md](docs/local_development_and_testing.md)
 
 ### Тести, перевірки, запуск перед релізом

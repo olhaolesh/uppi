@@ -38,6 +38,7 @@ This index lists only the current documentation set.
 
 - [./local_development_and_testing.md](./local_development_and_testing.md)
 - [./regression_test_map.md](./regression_test_map.md)
+- [./web_backend_shell.md](./web_backend_shell.md)
 - [./document_generation.md](./document_generation.md)
 - [./failure_registry_contract.md](./failure_registry_contract.md)
 - [./refactor_protected_invariants.md](./refactor_protected_invariants.md)
