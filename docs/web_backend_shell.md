@@ -14,8 +14,9 @@ Canonical references:
 Поточний shell:
 
 - додає ізольований FastAPI app factory;
-- публікує тільки `GET /health/live` і `GET /health/ready`;
+- публікує `GET /health/live` і `GET /health/ready`;
 - читає web-specific config з env-first dataclass;
+- має базовий cookie-based auth/session layer;
 - не імпортує і не запускає prepare/import/generation business flows.
 
 ## Локальний запуск
@@ -31,9 +32,12 @@ uvicorn uppi.web.app:app --reload
 - `GET /health/live`
 - `GET /health/ready`
 
+Auth/session detail:
+
+- [./web_auth_session.md](./web_auth_session.md)
+
 ## Чого цей shell ще не робить
 
-- немає auth/session
 - немає search/prepare API
 - немає generation API
 - немає bulk import API

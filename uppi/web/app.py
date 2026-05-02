@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
+from starlette.middleware.sessions import SessionMiddleware
 
 from uppi.web.api import api_router
 from uppi.web.config import WebAppConfig
@@ -17,6 +18,14 @@ def create_app(config: WebAppConfig | None = None) -> FastAPI:
         debug=resolved_config.debug,
     )
     app.state.web_config = resolved_config
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=resolved_config.session.secret,
+        session_cookie=resolved_config.session.cookie_name,
+        max_age=resolved_config.session.max_age_seconds,
+        same_site=resolved_config.session.cookie_samesite,
+        https_only=resolved_config.session.cookie_secure,
+    )
     app.include_router(api_router)
     return app
 

@@ -11,6 +11,13 @@ def test_web_app_config_from_env_uses_defaults_when_env_is_absent(monkeypatch):
     monkeypatch.delenv("UPPI_WEB_APP_VERSION", raising=False)
     monkeypatch.delenv("UPPI_WEB_ENV", raising=False)
     monkeypatch.delenv("UPPI_WEB_DEBUG", raising=False)
+    monkeypatch.delenv("UPPI_WEB_AUTH_USERNAME", raising=False)
+    monkeypatch.delenv("UPPI_WEB_AUTH_PASSWORD", raising=False)
+    monkeypatch.delenv("UPPI_WEB_AUTH_PIN", raising=False)
+    monkeypatch.delenv("UPPI_WEB_SESSION_SECRET", raising=False)
+    monkeypatch.delenv("UPPI_WEB_SESSION_COOKIE_NAME", raising=False)
+    monkeypatch.delenv("UPPI_WEB_SESSION_COOKIE_SECURE", raising=False)
+    monkeypatch.delenv("UPPI_WEB_SESSION_MAX_AGE_SECONDS", raising=False)
 
     cfg = WebAppConfig.from_env()
 
@@ -28,6 +35,13 @@ def test_web_app_config_from_env_uses_explicit_env_overrides(monkeypatch):
     monkeypatch.setenv("UPPI_WEB_APP_VERSION", "9.9.9")
     monkeypatch.setenv("UPPI_WEB_ENV", "test")
     monkeypatch.setenv("UPPI_WEB_DEBUG", "True")
+    monkeypatch.delenv("UPPI_WEB_AUTH_USERNAME", raising=False)
+    monkeypatch.delenv("UPPI_WEB_AUTH_PASSWORD", raising=False)
+    monkeypatch.delenv("UPPI_WEB_AUTH_PIN", raising=False)
+    monkeypatch.delenv("UPPI_WEB_SESSION_SECRET", raising=False)
+    monkeypatch.delenv("UPPI_WEB_SESSION_COOKIE_NAME", raising=False)
+    monkeypatch.delenv("UPPI_WEB_SESSION_COOKIE_SECURE", raising=False)
+    monkeypatch.delenv("UPPI_WEB_SESSION_MAX_AGE_SECONDS", raising=False)
 
     cfg = WebAppConfig.from_env()
 
