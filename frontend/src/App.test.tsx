@@ -68,7 +68,7 @@ describe("frontend skeleton app", () => {
     expect(screen.getByRole("button", { name: "Згенерувати Attestazione" })).toBeDisabled();
   });
 
-  it("renders the bulk import skeleton with CSV controls and disabled submit", async () => {
+  it("renders the bulk import screen with real CSV controls and guarded initial submit", async () => {
     authApiMocks.getCurrentSession.mockResolvedValue({
       authenticated: true,
       user: { username: "operator" },
@@ -78,6 +78,7 @@ describe("frontend skeleton app", () => {
 
     expect(await screen.findByRole("heading", { name: "Додавання клієнтів в БД" })).toBeInTheDocument();
     expect(screen.getByLabelText("CSV content")).toBeInTheDocument();
+    expect(screen.getByLabelText("CSV file")).toBeInTheDocument();
     expect(screen.getByLabelText("Force update visura")).toBeInTheDocument();
     expect(screen.getByLabelText("Fail fast")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Запустити імпорт" })).toBeDisabled();

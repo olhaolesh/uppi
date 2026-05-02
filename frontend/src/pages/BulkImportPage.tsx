@@ -1,18 +1,9 @@
-import { useState } from "react";
-
+import BulkImportResultPanel from "../components/BulkImportResultPanel";
 import StatusPanel from "../components/StatusPanel";
-
-const placeholderResults = [
-  { row: 2, locatoreCf: "RSSMRA80A01H501Z", status: "Pending web wiring" },
-  { row: 3, locatoreCf: "BNCLGU85C01G482K", status: "Pending web wiring" },
-];
+import { useBulkImportFlow } from "../hooks/useBulkImportFlow";
 
 export default function BulkImportPage() {
-  const [csvContent, setCsvContent] = useState(
-    "LOCATORE_CF\nRSSMRA80A01H501Z\nBNCLGU85C01G482K\n",
-  );
-  const [forceUpdateVisura, setForceUpdateVisura] = useState(false);
-  const [failFast, setFailFast] = useState(false);
+  const flow = useBulkImportFlow();
 
   return (
     <div className="page-stack">
@@ -22,8 +13,8 @@ export default function BulkImportPage() {
           <h2>Додавання клієнтів в БД</h2>
         </div>
         <p>
-          Це skeleton для future bulk-import UX. У Stage 6 він не викликає
-          `/clients/bulk-import` і не пише реальний web-run CSV.
+          Екран реально викликає `POST /clients/bulk-import`, але не створює `immobili.yml`, не
+          запускає generation і не викликає `prepare-by-CF`.
         </p>
       </section>
 
@@ -34,89 +25,120 @@ export default function BulkImportPage() {
             <label className="field">
               <span>CSV content</span>
               <textarea
-                rows={8}
-                value={csvContent}
-                onChange={(event) => setCsvContent(event.target.value)}
+                rows={10}
+                placeholder={"LOCATORE_CF\nRSSMRA80A01H501Z\nBNCLGU85C01G482K\n"}
+                value={flow.csvContent}
+                disabled={flow.loading}
+                onChange={(event) => flow.setCsvContent(event.target.value)}
               />
             </label>
+
+            <label className="field">
+              <span>CSV file</span>
+              <input
+                type="file"
+                accept=".csv,text/csv,text/plain"
+                disabled={flow.loading}
+                onChange={(event) => void flow.loadCsvFile(event.target.files?.[0] ?? null)}
+              />
+            </label>
+
+            {flow.selectedFileName ? (
+              <p className="helper-text">Завантажений файл: {flow.selectedFileName}</p>
+            ) : null}
+
             <label className="checkbox-field">
               <input
                 type="checkbox"
-                checked={forceUpdateVisura}
-                onChange={(event) => setForceUpdateVisura(event.target.checked)}
+                checked={flow.forceUpdateVisura}
+                disabled={flow.loading}
+                onChange={(event) => flow.setForceUpdateVisura(event.target.checked)}
               />
               <span>Force update visura</span>
             </label>
+
             <label className="checkbox-field">
               <input
                 type="checkbox"
-                checked={failFast}
-                onChange={(event) => setFailFast(event.target.checked)}
+                checked={flow.failFast}
+                disabled={flow.loading}
+                onChange={(event) => flow.setFailFast(event.target.checked)}
               />
               <span>Fail fast</span>
             </label>
-            <button className="primary-button" type="button" disabled>
-              Запустити імпорт
+
+            <button
+              className="primary-button"
+              type="button"
+              disabled={!flow.canSubmit}
+              onClick={() => void flow.submitImport()}
+            >
+              {flow.loading ? "Імпорт триває..." : "Запустити імпорт"}
             </button>
           </div>
-          <p className="helper-text">
-            Stage 8 підключить цей submit до current bulk-import owner path без зміни його
-            semantics.
-          </p>
+          <div className="message-stack">
+            <p className="helper-text">
+              Frontend передає JSON `csv_content` у current bulk import owner path. Multipart
+              upload і пряме browser/import керування тут не використовуються.
+            </p>
+            <div className="csv-example" aria-label="CSV format example">
+              <strong>Очікуваний CSV header</strong>
+              <pre>LOCATORE_CF{"\n"}RSSMRA80A01H501Z{"\n"}BNCLGU85C01G482K</pre>
+            </div>
+          </div>
         </article>
 
-        <StatusPanel title="Import-only boundary" tone="warning">
-          <p>
-            Bulk import лишається import-only. Цей екран не створює `immobili.yml`, не запускає
-            generation і не викликає `prepare-by-CF`.
-          </p>
+        <StatusPanel
+          title={flow.result ? "Import result" : "Початковий стан"}
+          tone={flow.result?.status === "aborted" ? "warning" : flow.result ? "success" : "info"}
+        >
+          {flow.result ? (
+            <div className="message-stack">
+              <p>Status: {flow.result.status}</p>
+              <p>Run ID: {flow.result.run_id}</p>
+              <p>CSV path: {flow.result.input.clients_csv_path}</p>
+              <p>Imported: {flow.result.summary.imported_count}</p>
+              <p>Failed: {flow.result.summary.failed_count}</p>
+            </div>
+          ) : (
+            <p>
+              Вставте або завантажте CSV, задайте опції й запустіть import. Стан зберігається
+              тільки в React state; `localStorage` і `sessionStorage` не використовуються.
+            </p>
+          )}
         </StatusPanel>
       </section>
 
-      <section className="panel-grid panel-grid--two">
-        <article className="panel-card">
-          <h3>Placeholder summary</h3>
-          <div className="stats-grid">
-            <div>
-              <span>Total rows</span>
-              <strong>3</strong>
-            </div>
-            <div>
-              <span>Unique clients</span>
-              <strong>2</strong>
-            </div>
-            <div>
-              <span>Imported</span>
-              <strong>0</strong>
-            </div>
-            <div>
-              <span>Failed</span>
-              <strong>0</strong>
-            </div>
-          </div>
-        </article>
+      {flow.error ? (
+        <div className="inline-alert" role="alert">
+          {flow.error}
+        </div>
+      ) : null}
 
-        <article className="panel-card">
-          <h3>Placeholder results</h3>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Row</th>
-                <th>LOCATORE_CF</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {placeholderResults.map((item) => (
-                <tr key={item.row}>
-                  <td>{item.row}</td>
-                  <td>{item.locatoreCf}</td>
-                  <td>{item.status}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </article>
+      <section className="panel-grid panel-grid--two">
+        <StatusPanel title="Import-only boundary" tone="warning">
+          <div className="message-stack">
+            <p>
+              Bulk import оновлює або наповнює БД через current import-only owner path. Він не
+              створює `immobili.yml`, не запускає DOCX generation і не викликає `prepare-by-CF`.
+            </p>
+            <p>
+              Browser/import flow може бути використаний backend service internally, але frontend
+              ним напряму не керує.
+            </p>
+          </div>
+        </StatusPanel>
+
+        {flow.result ? (
+          <BulkImportResultPanel result={flow.result} />
+        ) : (
+          <StatusPanel title="Summary pending">
+            <p>
+              Після успішного `POST /clients/bulk-import` тут з’являться `run_id`, summary,
+              row results, invalid rows і messages.
+            </p>
+          </StatusPanel>
+        )}
       </section>
     </div>
   );

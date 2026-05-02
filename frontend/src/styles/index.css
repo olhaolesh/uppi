@@ -324,6 +324,11 @@ a {
   color: #892d2d;
 }
 
+.inline-alert--warning {
+  background: rgba(145, 105, 61, 0.14);
+  color: #7b582f;
+}
+
 .placeholder-list {
   display: grid;
   gap: 0.8rem;
@@ -422,6 +427,29 @@ a {
 .data-table a {
   color: #0c587c;
   font-weight: 700;
+}
+
+.csv-example {
+  padding: 1rem;
+  border-radius: 1rem;
+  background: rgba(31, 42, 52, 0.04);
+}
+
+.csv-example strong {
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.csv-example pre {
+  margin: 0;
+  font-family: "SFMono-Regular", "Consolas", monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chip--warning {
+  background: rgba(145, 105, 61, 0.14);
+  color: #7b582f;
 }
 
 .panel-card h4,

@@ -1,5 +1,9 @@
-import type { BulkImportRequest } from "../types/api";
+import type { BulkImportRequest, BulkImportResponse } from "../types/api";
+import { apiFetch } from "./client";
 
-export async function runBulkImport(_payload: BulkImportRequest): Promise<never> {
-  throw new Error("Stage 8 will wire the bulk-import screen to /clients/bulk-import.");
+export function bulkImportClients(payload: BulkImportRequest): Promise<BulkImportResponse> {
+  return apiFetch<BulkImportResponse>("/clients/bulk-import", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }

@@ -186,3 +186,42 @@ export type BulkImportRequest = {
   force_update_visura?: boolean;
   fail_fast?: boolean;
 };
+
+export type BulkImportInputInfo = {
+  clients_csv_path: string;
+  force_update_visura: boolean;
+  fail_fast: boolean;
+};
+
+export type BulkImportSummary = {
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  unique_clients: number;
+  imported_count: number;
+  failed_count: number;
+  skipped_count: number;
+};
+
+export type BulkImportRowResult = {
+  row_number: number;
+  locatore_cf: string;
+  status: "imported" | "failed" | "skipped_duplicate";
+  message: string;
+};
+
+export type BulkImportInvalidRow = {
+  row_number: number;
+  code: string | null;
+  message: string;
+};
+
+export type BulkImportResponse = {
+  status: "completed" | "aborted";
+  run_id: string;
+  input: BulkImportInputInfo;
+  summary: BulkImportSummary;
+  results: BulkImportRowResult[];
+  invalid_rows: BulkImportInvalidRow[];
+  messages: string[];
+};

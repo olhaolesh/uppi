@@ -55,6 +55,8 @@ Default:
 - `POST /auth/logout`
 - реальний Stage 7 flow для екрана `Згенерувати Attestazione`
   через `POST /attestazioni/search` і `POST /attestazioni/generate`
+- реальний Stage 8 flow для екрана `Додавання клієнтів в БД`
+  через `POST /clients/bulk-import`
 
 Frontend використовує `credentials: "include"` і не зберігає password/pin у
 `localStorage` або `sessionStorage`.
@@ -63,14 +65,16 @@ Stage 7 detail:
 
 - [./frontend_attestazione_integration.md](./frontend_attestazione_integration.md)
 
+Stage 8 detail:
+
+- [./frontend_bulk_import_integration.md](./frontend_bulk_import_integration.md)
+
 ## Що поки skeleton/mock-only
 
-- екран `Додавання клієнтів в БД` не викликає real `POST /clients/bulk-import`
 - екран `Статус / Логи / Артефакти` не читає real jobs/logs/artifacts data
 
 План інтеграції:
 
-- реальна інтеграція bulk import екрана: Stage 8
 - job/status/logs/artifacts model: Stage 9
 
 ## Чого цей slice не робить
