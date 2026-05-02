@@ -225,3 +225,62 @@ export type BulkImportResponse = {
   invalid_rows: BulkImportInvalidRow[];
   messages: string[];
 };
+
+export type JobType =
+  | "attestazioni_search"
+  | "attestazioni_generate"
+  | "clients_bulk_import";
+
+export type JobStatus = "running" | "completed" | "failed" | "aborted" | "partial";
+
+export type JobActor = {
+  username: string;
+};
+
+export type JobEvent = {
+  timestamp: string;
+  level: "info" | "warning" | "error";
+  message: string;
+};
+
+export type JobArtifact = {
+  kind: string;
+  label: string;
+  local_path: string | null;
+  bucket: string | null;
+  object_key: string | null;
+  download_url: string | null;
+};
+
+export type JobSummaryMap = Record<string, ApiScalar | null>;
+
+export type JobSummaryItem = {
+  run_id: string;
+  type: JobType;
+  status: JobStatus;
+  created_at: string;
+  updated_at: string;
+  summary: JobSummaryMap;
+  artifact_count: number;
+  message_count: number;
+};
+
+export type JobDetail = {
+  run_id: string;
+  type: JobType;
+  status: JobStatus;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  actor: JobActor;
+  input: JobSummaryMap;
+  summary: JobSummaryMap;
+  artifacts: JobArtifact[];
+  events: JobEvent[];
+  messages: string[];
+};
+
+export type ListJobsResponse = {
+  jobs: JobSummaryItem[];
+};

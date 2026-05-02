@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from tempfile import mkdtemp
 
 from fastapi.testclient import TestClient
 
 from uppi.domain.exceptions import BulkImportCsvLoadError
 from uppi.web.app import create_app
 from uppi.web.config import WebAppConfig, WebAuthConfig, WebSessionConfig
+from uppi.web.services.job_registry import JobRegistry
 from uppi.web.services.bulk_import_adapter import (
     BulkImportCsvWriteError,
     BulkImportNoUsableRowsError,
@@ -42,15 +45,22 @@ class _FakeBulkImportAdapter:
     def __init__(self, *, result: BulkImportWebResult | None = None, error: Exception | None = None) -> None:
         self.result = result
         self.error = error
-        self.calls: list[object] = []
+        self.calls: list[tuple[object, str | None]] = []
 
-    def import_clients(self, payload):
-        self.calls.append(payload)
+    def import_clients(self, payload, *, run_id: str | None = None):
+        self.calls.append((payload, run_id))
         if self.error is not None:
             raise self.error
         if self.result is None:
             raise AssertionError("Fake bulk adapter expected a result")
-        return self.result
+        resolved_run_id = run_id or self.result.run_id
+        return replace(
+            self.result,
+            run_id=resolved_run_id,
+            clients_csv_path_relative=(
+                f"clients/web_bulk_import/{resolved_run_id}/clients.csv"
+            ),
+        )
 
 
 def _bulk_result(status: str = "completed") -> BulkImportWebResult:
@@ -98,6 +108,7 @@ def _make_client(fake_bulk_import_adapter: _FakeBulkImportAdapter) -> TestClient
         create_app(
             _make_auth_config(),
             bulk_import_adapter=fake_bulk_import_adapter,
+            job_registry=JobRegistry(storage_path=Path(mkdtemp()) / "jobs.json"),
         )
     )
 
@@ -143,14 +154,14 @@ def test_clients_bulk_import_returns_summary_after_login_and_hides_sensitive_val
     response = client.post("/clients/bulk-import", json=_valid_payload())
 
     assert response.status_code == 200
-    assert fake_adapter.calls[0].csv_content == "LOCATORE_CF\nRSSMRA80A01H501Z\nBNCLGU85C01G482K\n"
-    assert fake_adapter.calls[0].force_update_visura is False
-    assert fake_adapter.calls[0].fail_fast is False
+    assert fake_adapter.calls[0][0].csv_content == "LOCATORE_CF\nRSSMRA80A01H501Z\nBNCLGU85C01G482K\n"
+    assert fake_adapter.calls[0][0].force_update_visura is False
+    assert fake_adapter.calls[0][0].fail_fast is False
     assert response.json() == {
         "status": "completed",
-        "run_id": "8e9f4c8f1b5d4b8c9a7e6d5c4b3a2f10",
+        "run_id": fake_adapter.calls[0][1],
         "input": {
-            "clients_csv_path": "clients/web_bulk_import/8e9f4c8f1b5d4b8c9a7e6d5c4b3a2f10/clients.csv",
+            "clients_csv_path": f"clients/web_bulk_import/{fake_adapter.calls[0][1]}/clients.csv",
             "force_update_visura": False,
             "fail_fast": False,
         },
@@ -211,8 +222,8 @@ def test_clients_bulk_import_passes_explicit_flags_and_validates_missing_or_empt
     assert missing.status_code == 422
     assert empty.status_code == 422
     assert explicit.status_code == 200
-    assert fake_adapter.calls[-1].force_update_visura is True
-    assert fake_adapter.calls[-1].fail_fast is True
+    assert fake_adapter.calls[-1][0].force_update_visura is True
+    assert fake_adapter.calls[-1][0].fail_fast is True
 
 
 def test_clients_bulk_import_maps_safe_bulk_errors_to_http_responses():

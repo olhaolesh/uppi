@@ -57,6 +57,8 @@ Default:
   через `POST /attestazioni/search` і `POST /attestazioni/generate`
 - реальний Stage 8 flow для екрана `Додавання клієнтів в БД`
   через `POST /clients/bulk-import`
+- реальний Stage 9 flow для екрана `Статус / Логи / Артефакти`
+  через `GET /jobs` і `GET /jobs/{run_id}`
 
 Frontend використовує `credentials: "include"` і не зберігає password/pin у
 `localStorage` або `sessionStorage`.
@@ -69,13 +71,16 @@ Stage 8 detail:
 
 - [./frontend_bulk_import_integration.md](./frontend_bulk_import_integration.md)
 
-## Що поки skeleton/mock-only
+Stage 9 detail:
 
-- екран `Статус / Логи / Артефакти` не читає real jobs/logs/artifacts data
+- [./web_jobs_status_artifacts.md](./web_jobs_status_artifacts.md)
 
-План інтеграції:
+## Що поки не реалізовано
 
-- job/status/logs/artifacts model: Stage 9
+- async queue / background jobs
+- polling, WebSocket або SSE live logs
+- artifact download endpoint
+- signed URLs або storage delivery layer
 
 ## Чого цей slice не робить
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from tempfile import mkdtemp
 
 from fastapi.testclient import TestClient
 
@@ -12,6 +14,7 @@ from uppi.services.generation_runner import GenerationArtifactRef
 from uppi.web.app import create_app
 from uppi.web.config import WebAppConfig, WebAuthConfig, WebSessionConfig
 from uppi.web.services.generation_adapter import GeneratedRunResult
+from uppi.web.services.job_registry import JobRegistry
 from uppi.web.services.generation_yaml_builder import (
     NoSelectedImmobilesError,
     PreparedImmobileIdentityMismatchError,
@@ -122,15 +125,22 @@ class _FakeGenerationAdapter:
     def __init__(self, *, result: GeneratedRunResult | None = None, error: Exception | None = None) -> None:
         self.result = result
         self.error = error
-        self.calls: list[object] = []
+        self.calls: list[tuple[object, str | None]] = []
 
-    def generate(self, payload):
-        self.calls.append(payload)
+    def generate(self, payload, *, run_id: str | None = None):
+        self.calls.append((payload, run_id))
         if self.error is not None:
             raise self.error
         if self.result is None:
             raise AssertionError("Fake generation adapter expected a result")
-        return self.result
+        resolved_run_id = run_id or self.result.run_id
+        return replace(
+            self.result,
+            run_id=resolved_run_id,
+            generation_output_path_relative=(
+                f"clients/web_generation/{OWNER_CF}/{resolved_run_id}/immobili.yml"
+            ),
+        )
 
 
 def _generated_result() -> GeneratedRunResult:
@@ -166,6 +176,7 @@ def _make_client(fake_generation_adapter: _FakeGenerationAdapter) -> TestClient:
             _make_auth_config(),
             prepare_search_adapter=_FakePrepareAdapter(),
             generation_adapter=fake_generation_adapter,
+            job_registry=JobRegistry(storage_path=Path(mkdtemp()) / "jobs.json"),
         )
     )
 
@@ -246,15 +257,15 @@ def test_attestazioni_generate_returns_synchronous_result_after_login_and_keeps_
     response = client.post("/attestazioni/generate", json=_valid_payload())
 
     assert response.status_code == 200
-    assert fake_adapter.calls[0].locatore_cf == OWNER_CF
+    assert fake_adapter.calls[0][0].locatore_cf == OWNER_CF
     assert response.json() == {
         "status": "generated",
-        "run_id": "8e9f4c8f1b5d4b8c9a7e6d5c4b3a2f10",
+        "run_id": fake_adapter.calls[0][1],
         "locatore_cf": OWNER_CF,
         "input": {
             "prepared_immobili_yaml_path": f"clients/web_prepare/{OWNER_CF}/immobili.yml",
             "generation_immobili_yaml_path": (
-                f"clients/web_generation/{OWNER_CF}/8e9f4c8f1b5d4b8c9a7e6d5c4b3a2f10/immobili.yml"
+                f"clients/web_generation/{OWNER_CF}/{fake_adapter.calls[0][1]}/immobili.yml"
             ),
         },
         "summary": {

@@ -101,7 +101,12 @@ class GenerationYamlBuilder:
         self.allowed_prepared_root = self.repo_root / "clients" / "web_prepare"
         self.allowed_generation_root = self.repo_root / "clients" / "web_generation"
 
-    def build(self, payload: "AttestazioniGenerateRequest") -> BuiltGenerationYaml:
+    def build(
+        self,
+        payload: "AttestazioniGenerateRequest",
+        *,
+        run_id: str | None = None,
+    ) -> BuiltGenerationYaml:
         """Validates the prepared source path, applies allowed edits, and writes a web-run YAML."""
         locatore_cf = payload.locatore_cf
         prepared_output_path = self._resolve_prepared_output_path(
@@ -174,14 +179,14 @@ class GenerationYamlBuilder:
             immobili=tuple(next_immobili),
         )
 
-        run_id = uuid4().hex
+        resolved_run_id = str(run_id or uuid4().hex)
         generation_output_path = (
-            self.allowed_generation_root / locatore_cf / run_id / "immobili.yml"
+            self.allowed_generation_root / locatore_cf / resolved_run_id / "immobili.yml"
         )
         self._write_document(next_document, generation_output_path)
         validated_document = self.document_loader(generation_output_path)
         return BuiltGenerationYaml(
-            run_id=run_id,
+            run_id=resolved_run_id,
             locatore_cf=locatore_cf,
             prepared_output_path=prepared_output_path,
             generation_output_path=generation_output_path,

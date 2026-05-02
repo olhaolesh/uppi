@@ -53,9 +53,14 @@ class GenerationAdapter:
         self.yaml_builder = yaml_builder or GenerationYamlBuilder(repo_root=self.repo_root)
         self.generation_runner_factory = generation_runner_factory
 
-    def generate(self, payload: "AttestazioniGenerateRequest") -> GeneratedRunResult:
+    def generate(
+        self,
+        payload: "AttestazioniGenerateRequest",
+        *,
+        run_id: str | None = None,
+    ) -> GeneratedRunResult:
         """Builds one web-run YAML and delegates execution to the current generation-only path."""
-        built_yaml = self.yaml_builder.build(payload)
+        built_yaml = self.yaml_builder.build(payload, run_id=run_id)
         generation_runner = self._build_generation_runner()
         runner_result = generation_runner.run_yaml(
             built_yaml.generation_output_path,

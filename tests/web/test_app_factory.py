@@ -51,6 +51,8 @@ def test_create_app_returns_fastapi_and_uses_explicit_config():
         "/auth/me",
         "/health/live",
         "/health/ready",
+        "/jobs",
+        "/jobs/{run_id}",
     }
 
 

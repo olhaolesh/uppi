@@ -90,10 +90,15 @@ class BulkImportAdapter:
         self.bulk_import_service_factory = bulk_import_service_factory
         self.run_id_factory = run_id_factory or (lambda: uuid4().hex)
 
-    def import_clients(self, payload: "ClientsBulkImportRequest") -> BulkImportWebResult:
+    def import_clients(
+        self,
+        payload: "ClientsBulkImportRequest",
+        *,
+        run_id: str | None = None,
+    ) -> BulkImportWebResult:
         """Stores one web-run CSV file and reuses current bulk CSV import-only orchestration."""
-        run_id = str(self.run_id_factory())
-        clients_csv_path = self._build_clients_csv_path(run_id)
+        resolved_run_id = str(run_id or self.run_id_factory())
+        clients_csv_path = self._build_clients_csv_path(resolved_run_id)
         self._write_clients_csv(clients_csv_path, payload.csv_content)
         service = self._build_bulk_import_service()
         run_result = service.run(
@@ -133,7 +138,7 @@ class BulkImportAdapter:
 
         return BulkImportWebResult(
             status="aborted" if run_result.aborted else "completed",
-            run_id=run_id,
+            run_id=resolved_run_id,
             clients_csv_path=clients_csv_path,
             clients_csv_path_relative=self._to_relative_path(clients_csv_path),
             force_update_visura=run_result.force_update_visura,

@@ -13,6 +13,7 @@ from uppi.domain.exceptions import (
     PrepareOutputWriteError,
     YamlInputValidationError,
 )
+from uppi.web.api.jobs import get_job_registry
 from uppi.web.schemas.attestazioni import (
     AttestazioniGenerateRequest,
     AttestazioniGenerateResponse,
@@ -20,8 +21,10 @@ from uppi.web.schemas.attestazioni import (
     AttestazioniSearchResponse,
 )
 from uppi.web.schemas.auth import AuthenticatedUser
+from uppi.web.schemas.jobs import JobArtifactResponse
 from uppi.web.security import require_authenticated_user
 from uppi.web.services.generation_adapter import GenerationAdapter, GenerationRunFailedError
+from uppi.web.services.job_registry import JobRegistry
 from uppi.web.services.generation_yaml_builder import (
     NoSelectedImmobilesError,
     PreparedDocumentClientMismatchError,
@@ -55,90 +58,193 @@ def get_generation_adapter(request: Request) -> GenerationAdapter:
 @router.post("/search", response_model=AttestazioniSearchResponse)
 def search_attestazioni(
     payload: AttestazioniSearchRequest,
-    _: AuthenticatedUser = Depends(require_authenticated_user),
+    user: AuthenticatedUser = Depends(require_authenticated_user),
     prepare_adapter: PrepareSearchAdapter = Depends(get_prepare_search_adapter),
+    job_registry: JobRegistry = Depends(get_job_registry),
 ) -> AttestazioniSearchResponse:
     """Delegates to current prepare-by-CF and returns a frontend-friendly document DTO."""
+    job = job_registry.start_job(
+        job_type="attestazioni_search",
+        actor_username=user.username,
+        input_metadata={
+            "locatore_cf": payload.locatore_cf,
+            "force_update_visura": payload.force_update_visura,
+        },
+        started_message="Search started",
+    )
     try:
         result = prepare_adapter.prepare_search(
             payload.locatore_cf,
             force_update_visura=payload.force_update_visura,
         )
     except PrepareInputError as exc:
+        detail = "Invalid prepare request."
+        job_registry.fail_job(job.run_id, safe_message=detail)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid prepare request.",
+            detail=detail,
         ) from exc
     except PrepareNoDataError as exc:
+        detail = "No prepared immobili data is available for the requested client."
+        job_registry.fail_job(job.run_id, safe_message=detail)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No prepared immobili data is available for the requested client.",
+            detail=detail,
         ) from exc
     except PrepareImportFailedError as exc:
+        detail = "Prepare could not refresh client data."
+        job_registry.fail_job(job.run_id, safe_message=detail)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Prepare could not refresh client data.",
+            detail=detail,
         ) from exc
     except (PrepareGenerationFailedError, PrepareOutputWriteError, FileNotFoundError, YamlInputValidationError) as exc:
+        detail = "Prepared client data could not be loaded safely."
+        job_registry.fail_job(job.run_id, safe_message=detail)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Prepared client data could not be loaded safely.",
+            detail=detail,
         ) from exc
     except Exception as exc:
+        detail = "Unexpected error while preparing client data."
+        job_registry.fail_job(job.run_id, safe_message=detail)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Unexpected error while preparing client data.",
+            detail=detail,
         ) from exc
 
-    return AttestazioniSearchResponse.from_prepared_result(result)
+    response = AttestazioniSearchResponse.from_prepared_result(result)
+    job_registry.complete_job(
+        job.run_id,
+        summary={
+            "immobili_count": response.document.immobili_count,
+            "active_count": response.document.active_count,
+            "source": response.source,
+        },
+        artifacts=[
+            JobArtifactResponse(
+                kind="prepared_immobili_yaml",
+                label="Prepared immobili.yml",
+                local_path=response.document.immobili_yaml_path,
+            )
+        ],
+        messages=list(response.messages),
+        completion_message="Search completed",
+    )
+    return response
 
 
 @router.post("/generate", response_model=AttestazioniGenerateResponse)
 def generate_attestazioni(
     payload: AttestazioniGenerateRequest,
-    _: AuthenticatedUser = Depends(require_authenticated_user),
+    user: AuthenticatedUser = Depends(require_authenticated_user),
     generation_adapter: GenerationAdapter = Depends(get_generation_adapter),
+    job_registry: JobRegistry = Depends(get_job_registry),
 ) -> AttestazioniGenerateResponse:
     """Builds a web-run generation YAML and delegates to the current generation-only path."""
+    job = job_registry.start_job(
+        job_type="attestazioni_generate",
+        actor_username=user.username,
+        input_metadata={
+            "locatore_cf": payload.locatore_cf,
+            "prepared_immobili_yaml_path": payload.prepared_immobili_yaml_path
+            or f"clients/web_prepare/{payload.locatore_cf}/immobili.yml",
+        },
+        started_message="Generation started",
+    )
     try:
-        result = generation_adapter.generate(payload)
+        result = generation_adapter.generate(payload, run_id=job.run_id)
     except UnsafePreparedYamlPathError as exc:
+        detail = "Prepared YAML path is outside the allowed web_prepare workspace."
+        job_registry.fail_job(job.run_id, safe_message=detail)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Prepared YAML path is outside the allowed web_prepare workspace.",
+            detail=detail,
         ) from exc
     except FileNotFoundError as exc:
+        detail = "Prepared immobili YAML was not found."
+        job_registry.fail_job(job.run_id, safe_message=detail)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Prepared immobili YAML was not found.",
+            detail=detail,
         ) from exc
     except (NoSelectedImmobilesError, PreparedImmobileIndexNotFoundError) as exc:
+        detail = str(exc)
+        job_registry.fail_job(job.run_id, safe_message=detail)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail=detail,
         ) from exc
     except (PreparedDocumentClientMismatchError, PreparedImmobileIdentityMismatchError, GenerationPrepareRequiredError) as exc:
+        detail = (
+            "Prepared data no longer matches the current generation context. "
+            "Run search/prepare again."
+        )
+        job_registry.fail_job(job.run_id, safe_message=detail)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Prepared data no longer matches the current generation context. "
-                "Run search/prepare again."
-            ),
+            detail=detail,
         ) from exc
     except YamlInputValidationError as exc:
+        detail = "Generation YAML validation failed for the requested edits."
+        job_registry.fail_job(job.run_id, safe_message=detail)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Generation YAML validation failed for the requested edits.",
+            detail=detail,
         ) from exc
     except GenerationRunFailedError as exc:
+        detail = "Generation failed before any artifact could be produced."
+        job_registry.fail_job(job.run_id, safe_message=detail)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Generation failed before any artifact could be produced.",
+            detail=detail,
         ) from exc
     except Exception as exc:
+        detail = "Unexpected error while generating attestazioni."
+        job_registry.fail_job(job.run_id, safe_message=detail)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Unexpected error while generating attestazioni.",
+            detail=detail,
         ) from exc
 
-    return AttestazioniGenerateResponse.from_generated_result(result)
+    response = AttestazioniGenerateResponse.from_generated_result(result)
+    job_status = "partial" if result.generated_count > 0 and result.failed_count > 0 else "completed"
+    completion_message = (
+        "Generation completed with failures"
+        if job_status == "partial"
+        else "Generation completed"
+    )
+    job_registry.complete_job(
+        job.run_id,
+        status=job_status,
+        summary={
+            "requested_count": response.summary.requested_count,
+            "generated_count": response.summary.generated_count,
+            "failed_count": response.summary.failed_count,
+        },
+        artifacts=[
+            JobArtifactResponse(
+                kind="generation_immobili_yaml",
+                label="Generation immobili.yml",
+                local_path=response.input.generation_immobili_yaml_path,
+            ),
+            *[
+                JobArtifactResponse(
+                    kind=artifact.kind,
+                    label=(
+                        f"Attestazione F{artifact.identity.foglio} "
+                        f"N{artifact.identity.numero} S{artifact.identity.sub}"
+                    ),
+                    local_path=artifact.local_path,
+                    bucket=artifact.bucket,
+                    object_key=artifact.object_key,
+                    download_url=artifact.download_url,
+                )
+                for artifact in response.artifacts
+            ],
+        ],
+        messages=list(response.messages),
+        completion_message=completion_message,
+        event_level="warning" if job_status == "partial" else "info",
+    )
+    return response

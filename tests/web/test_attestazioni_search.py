@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tempfile import mkdtemp
 
 from fastapi.testclient import TestClient
 
@@ -15,6 +16,7 @@ from uppi.domain.exceptions import (
 )
 from uppi.web.app import create_app
 from uppi.web.config import WebAppConfig, WebAuthConfig, WebSessionConfig
+from uppi.web.services.job_registry import JobRegistry
 from uppi.web.services.prepare_adapter import PreparedSearchResult
 
 
@@ -127,7 +129,13 @@ def _prepared_result(source: str = "db") -> PreparedSearchResult:
 
 def _make_client(fake_adapter: _FakePrepareAdapter) -> TestClient:
     """Builds a TestClient with an injected fake prepare adapter."""
-    return TestClient(create_app(_make_auth_config(), prepare_search_adapter=fake_adapter))
+    return TestClient(
+        create_app(
+            _make_auth_config(),
+            prepare_search_adapter=fake_adapter,
+            job_registry=JobRegistry(storage_path=Path(mkdtemp()) / "jobs.json"),
+        )
+    )
 
 
 def _login(client: TestClient) -> None:

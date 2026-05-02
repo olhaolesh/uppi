@@ -20,11 +20,25 @@ class _FakeYamlBuilder:
 
     def __init__(self, built: BuiltGenerationYaml) -> None:
         self.built = built
-        self.calls: list[AttestazioniGenerateRequest] = []
+        self.calls: list[tuple[AttestazioniGenerateRequest, str | None]] = []
 
-    def build(self, payload: AttestazioniGenerateRequest) -> BuiltGenerationYaml:
-        self.calls.append(payload)
-        return self.built
+    def build(
+        self,
+        payload: AttestazioniGenerateRequest,
+        *,
+        run_id: str | None = None,
+    ) -> BuiltGenerationYaml:
+        self.calls.append((payload, run_id))
+        if run_id is None:
+            return self.built
+        return BuiltGenerationYaml(
+            run_id=run_id,
+            locatore_cf=self.built.locatore_cf,
+            prepared_output_path=self.built.prepared_output_path,
+            generation_output_path=self.built.generation_output_path.parent.parent / run_id / "immobili.yml",
+            requested_count=self.built.requested_count,
+            document=self.built.document,
+        )
 
 
 class _FakeRunner:
@@ -103,8 +117,8 @@ def test_generation_adapter_delegates_to_yaml_builder_and_current_runner(tmp_pat
 
     result = adapter.generate(_make_request())
 
-    assert fake_builder.calls[0].locatore_cf == "RSSMRA80A01H501Z"
-    assert fake_runner.calls == [(built.generation_output_path, "run-123")]
+    assert fake_builder.calls[0][0].locatore_cf == "RSSMRA80A01H501Z"
+    assert fake_runner.calls == [((tmp_path / "clients" / "web_generation" / "RSSMRA80A01H501Z" / "run-123" / "immobili.yml"), "run-123")]
     assert result.prepared_output_path_relative == "clients/web_prepare/RSSMRA80A01H501Z/immobili.yml"
     assert result.generation_output_path_relative == "clients/web_generation/RSSMRA80A01H501Z/run-123/immobili.yml"
     assert result.generated_count == 1

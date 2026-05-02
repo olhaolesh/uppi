@@ -9,6 +9,7 @@ from .bulk_import_adapter import (
 )
 from .generation_adapter import GeneratedRunResult, GenerationAdapter, GenerationRunFailedError
 from .generation_yaml_builder import BuiltGenerationYaml, GenerationYamlBuilder
+from .job_registry import JobRegistry, JobRegistryNotFoundError
 from .prepare_adapter import PrepareSearchAdapter, PreparedSearchResult
 
 __all__ = [
@@ -21,6 +22,8 @@ __all__ = [
     "GenerationAdapter",
     "GenerationRunFailedError",
     "GenerationYamlBuilder",
+    "JobRegistry",
+    "JobRegistryNotFoundError",
     "PrepareSearchAdapter",
     "PreparedSearchResult",
     "authenticate_login",

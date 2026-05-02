@@ -9,6 +9,7 @@ from .attestazioni import (
 from .auth import AuthStatusResponse, AuthenticatedUser, LoginRequest, LogoutResponse
 from .clients import ClientsBulkImportRequest, ClientsBulkImportResponse
 from .health import HealthStatusResponse
+from .jobs import JobDetailResponse, JobListItemResponse, JobsListResponse
 
 __all__ = [
     "AttestazioniGenerateRequest",
@@ -20,6 +21,9 @@ __all__ = [
     "ClientsBulkImportRequest",
     "ClientsBulkImportResponse",
     "HealthStatusResponse",
+    "JobDetailResponse",
+    "JobListItemResponse",
+    "JobsListResponse",
     "LoginRequest",
     "LogoutResponse",
 ]
