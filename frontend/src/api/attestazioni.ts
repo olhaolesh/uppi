@@ -1,13 +1,25 @@
-import type { AttestazioneGenerateRequest, AttestazioneSearchRequest } from "../types/api";
+import { apiFetch } from "./client";
+import type {
+  AttestazioneGenerateRequest,
+  AttestazioneGenerateResponse,
+  AttestazioneSearchRequest,
+  AttestazioneSearchResponse,
+} from "../types/api";
 
-export async function searchPreparedAttestazione(
-  _payload: AttestazioneSearchRequest,
-): Promise<never> {
-  throw new Error("Stage 7 will wire the generate screen to /attestazioni/search.");
+export function searchAttestazioni(
+  payload: AttestazioneSearchRequest,
+): Promise<AttestazioneSearchResponse> {
+  return apiFetch<AttestazioneSearchResponse>("/attestazioni/search", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
-export async function generateAttestazione(
-  _payload: AttestazioneGenerateRequest,
-): Promise<never> {
-  throw new Error("Stage 7 will wire the generate screen to /attestazioni/generate.");
+export function generateAttestazione(
+  payload: AttestazioneGenerateRequest,
+): Promise<AttestazioneGenerateResponse> {
+  return apiFetch<AttestazioneGenerateResponse>("/attestazioni/generate", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }

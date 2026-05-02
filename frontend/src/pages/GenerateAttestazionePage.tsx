@@ -1,15 +1,10 @@
-import { useState } from "react";
-
+import GenerationResultPanel from "../components/GenerationResultPanel";
+import ImmobileEditor from "../components/ImmobileEditor";
 import StatusPanel from "../components/StatusPanel";
-
-const placeholderImmobili = [
-  { index: 1, title: "Foglio 12 / Numero 345 / Sub 7", status: "Prepared placeholder" },
-  { index: 2, title: "Foglio 18 / Numero 44 / Sub 2", status: "Disabled until Stage 7" },
-];
+import { useAttestazioneFlow } from "../hooks/useAttestazioneFlow";
 
 export default function GenerateAttestazionePage() {
-  const [locatoreCf, setLocatoreCf] = useState("");
-  const [forceUpdateVisura, setForceUpdateVisura] = useState(false);
+  const flow = useAttestazioneFlow();
 
   return (
     <div className="page-stack">
@@ -19,8 +14,9 @@ export default function GenerateAttestazionePage() {
           <h2>Згенерувати Attestazione</h2>
         </div>
         <p>
-          UI skeleton показує майбутній flow search/prepare/edit/generate, але в цьому
-          stage не викликає `/attestazioni/search` або `/attestazioni/generate`.
+          Екран тепер реально викликає `POST /attestazioni/search` і
+          `POST /attestazioni/generate`, але не дублює prepare/generation orchestration і не
+          ходить у SISTER напряму.
         </p>
       </section>
 
@@ -32,117 +28,202 @@ export default function GenerateAttestazionePage() {
               <span>Codice fiscale locatore</span>
               <input
                 placeholder="RSSMRA80A01H501Z"
-                value={locatoreCf}
-                onChange={(event) => setLocatoreCf(event.target.value.toUpperCase())}
+                value={flow.locatoreCf}
+                disabled={flow.searchLoading || flow.generationLoading}
+                onChange={(event) => flow.setLocatoreCf(event.target.value.toUpperCase())}
               />
             </label>
 
             <label className="checkbox-field">
               <input
                 type="checkbox"
-                checked={forceUpdateVisura}
-                onChange={(event) => setForceUpdateVisura(event.target.checked)}
+                checked={flow.forceUpdateVisura}
+                disabled={flow.searchLoading || flow.generationLoading}
+                onChange={(event) => flow.setForceUpdateVisura(event.target.checked)}
               />
               <span>Force update visura</span>
             </label>
 
-            <button className="primary-button" type="button" disabled>
-              Пошук / підготувати дані
+            <button
+              className="primary-button"
+              type="button"
+              disabled={!flow.canSearch}
+              onClick={() => void flow.submitSearch()}
+            >
+              {flow.searchLoading ? "Підготовка..." : "Пошук / підготувати дані"}
             </button>
           </div>
           <p className="helper-text">
-            Stage 7 підключить цей блок до current prepare owner path через вже наявний backend
-            adapter.
+            Search/prepare делегується у current `prepare-by-CF` owner path через backend
+            adapter. Frontend не вирішує DB hit/miss, import refresh або generation rules.
           </p>
         </article>
 
-        <StatusPanel title="Стан інтеграції" tone="warning">
-          <p>
-            Search, edit і generate залишені mock-only. Skeleton навмисно не запускає
-            реальні бізнес-ендпоінти.
-          </p>
+        <StatusPanel
+          title={flow.preparedResult ? "Prepared result" : "Початковий стан"}
+          tone={flow.preparedResult ? "success" : "info"}
+        >
+          {flow.preparedResult ? (
+            <div className="message-stack">
+              <p>Source: {flow.preparedResult.source}</p>
+              <p>Immobili count: {flow.preparedResult.document.immobili_count}</p>
+              <p>Active count: {flow.preparedResult.document.active_count}</p>
+              <label className="field field--readonly">
+                <span>Prepared YAML path</span>
+                <input
+                  value={flow.preparedResult.document.immobili_yaml_path}
+                  readOnly
+                  aria-readonly="true"
+                />
+              </label>
+              {flow.preparedResult.messages.length > 0 ? (
+                <ul className="bullet-list">
+                  {flow.preparedResult.messages.map((message) => (
+                    <li key={message}>{message}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p>Prepared document готовий для operator edits і generation.</p>
+              )}
+            </div>
+          ) : (
+            <p>
+              Введіть codice fiscale, запустіть підготовку і дочекайтесь prepared YAML, після
+              чого стануть доступні immobili, editable fields і generate action.
+            </p>
+          )}
         </StatusPanel>
       </section>
 
-      <section className="panel-grid panel-grid--two">
-        <article className="panel-card">
-          <div className="panel-card__header">
-            <h3>Placeholder immobili</h3>
-            <span className="chip">Prepared list preview</span>
-          </div>
-          <div className="placeholder-list">
-            {placeholderImmobili.map((immobile) => (
-              <div className="placeholder-item" key={immobile.index}>
-                <div>
-                  <strong>Immobile #{immobile.index}</strong>
-                  <p>{immobile.title}</p>
-                </div>
-                <span className="chip chip--muted">{immobile.status}</span>
-              </div>
-            ))}
-          </div>
-        </article>
+      {flow.searchError ? (
+        <div className="inline-alert" role="alert">
+          {flow.searchError}
+        </div>
+      ) : null}
 
-        <article className="panel-card">
-          <div className="panel-card__header">
-            <h3>Operator edit form</h3>
-            <span className="chip">Stage 7 wiring pending</span>
-          </div>
-          <div className="form-grid form-grid--compact">
-            <label className="field">
-              <span>Comune immobile</span>
-              <input placeholder="PESCARA" />
-            </label>
-            <label className="field">
-              <span>Via immobile</span>
-              <input placeholder="VIA ROMA" />
-            </label>
-            <label className="field">
-              <span>Civico</span>
-              <input placeholder="10" />
-            </label>
-            <label className="field">
-              <span>Energy class</span>
-              <input placeholder="G" />
-            </label>
-            <label className="field">
-              <span>Conduttore nome</span>
-              <input placeholder="Mario Rossi" />
-            </label>
-            <label className="field">
-              <span>Contratto data</span>
-              <input placeholder="2026-05-02" />
-            </label>
-            <label className="field">
-              <span>Elemento A1</span>
-              <input placeholder="X" />
-            </label>
-            <label className="field">
-              <span>Elemento B1</span>
-              <input placeholder="" />
-            </label>
-          </div>
-        </article>
-      </section>
+      {flow.generationError ? (
+        <div className="inline-alert" role="alert">
+          {flow.generationError}
+        </div>
+      ) : null}
 
-      <section className="panel-grid panel-grid--two">
-        <StatusPanel title="Run-only contract fields">
-          <ul className="bullet-list">
-            <li>Conduttore, contratto, registrazione і canone показані лише як skeleton-поля.</li>
-            <li>Generation YAML builder уже існує в backend, але UI його ще не викликає.</li>
-          </ul>
-        </StatusPanel>
-
-        <article className="panel-card">
-          <h3>Generation action</h3>
-          <button className="primary-button" type="button" disabled>
-            Згенерувати Attestazione
-          </button>
+      {!flow.preparedResult ? (
+        <section className="panel-card">
+          <h3>Prepared client data ще відсутні</h3>
           <p className="helper-text">
-            Реальна інтеграція цього екрана йде окремим Stage 7 pass. Тут немає викликів
-            `/attestazioni/generate`.
+            До успішного `POST /attestazioni/search` кнопка генерації лишається disabled, а
+            immobili editor не рендериться.
           </p>
-        </article>
+        </section>
+      ) : (
+        <>
+          <section className="panel-grid panel-grid--two">
+            <article className="panel-card">
+              <h3>Client info</h3>
+              <div className="detail-grid">
+                <label className="field field--readonly">
+                  <span>LOCATORE_CF</span>
+                  <input value={flow.preparedResult.client.locatore_cf} readOnly aria-readonly="true" />
+                </label>
+                <label className="field field--readonly">
+                  <span>COMUNE</span>
+                  <input value={flow.preparedResult.client.comune} readOnly aria-readonly="true" />
+                </label>
+                <label className="field field--readonly">
+                  <span>TIPO_CATASTO</span>
+                  <input value={flow.preparedResult.client.tipo_catasto} readOnly aria-readonly="true" />
+                </label>
+                <label className="field field--readonly">
+                  <span>UFFICIO_LABEL</span>
+                  <input value={flow.preparedResult.client.ufficio_label} readOnly aria-readonly="true" />
+                </label>
+              </div>
+            </article>
+
+            <article className="panel-card">
+              <h3>Client updates</h3>
+              <div className="detail-grid">
+                <label className="field">
+                  <span>Locatore comune res</span>
+                  <input
+                    value={flow.clientUpdates.locatore_comune_res}
+                    disabled={flow.generationLoading}
+                    onChange={(event) =>
+                      flow.updateClientField("locatore_comune_res", event.target.value)
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span>Locatore via</span>
+                  <input
+                    value={flow.clientUpdates.locatore_via}
+                    disabled={flow.generationLoading}
+                    onChange={(event) => flow.updateClientField("locatore_via", event.target.value)}
+                  />
+                </label>
+                <label className="field">
+                  <span>Locatore civico</span>
+                  <input
+                    value={flow.clientUpdates.locatore_civico}
+                    disabled={flow.generationLoading}
+                    onChange={(event) =>
+                      flow.updateClientField("locatore_civico", event.target.value)
+                    }
+                  />
+                </label>
+              </div>
+            </article>
+          </section>
+
+          <section className="page-stack">
+            {flow.immobili.map((immobile) => (
+              <ImmobileEditor
+                key={immobile.index}
+                immobile={immobile}
+                disabled={flow.generationLoading}
+                onSelectedChange={flow.updateSelected}
+                onEditableChange={flow.updateEditableField}
+                onRunOnlyChange={flow.updateRunOnlyField}
+                onElementChange={flow.updateElementField}
+              />
+            ))}
+          </section>
+
+        </>
+      )}
+
+      <section className="panel-grid panel-grid--two">
+        <StatusPanel
+          title="Generation action"
+          tone={flow.canGenerate ? "success" : "warning"}
+        >
+          <div className="message-stack">
+            <button
+              className="primary-button"
+              type="button"
+              disabled={!flow.canGenerate}
+              onClick={() => void flow.submitGeneration()}
+            >
+              {flow.generationLoading ? "Генерація..." : "Згенерувати Attestazione"}
+            </button>
+            <p>
+              Generation стане доступною тільки після prepared result і хоча б одного selected
+              immobile.
+            </p>
+          </div>
+        </StatusPanel>
+
+        {flow.generationResult ? (
+          <GenerationResultPanel result={flow.generationResult} />
+        ) : (
+          <StatusPanel title="Generation result pending">
+            <p>
+              {flow.preparedResult
+                ? "Після успішного `POST /attestazioni/generate` тут з’являться `run_id`, summary, messages і safe artifact refs."
+                : "Спочатку підготуйте дані клієнта через `POST /attestazioni/search`, тоді generation endpoint стане доступним із цього екрана."}
+            </p>
+          </StatusPanel>
+        )}
       </section>
     </div>
   );

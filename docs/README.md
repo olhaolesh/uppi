@@ -44,6 +44,7 @@ This index lists only the current documentation set.
 - [./web_attestazioni_generation.md](./web_attestazioni_generation.md)
 - [./web_clients_bulk_import.md](./web_clients_bulk_import.md)
 - [./frontend_skeleton.md](./frontend_skeleton.md)
+- [./frontend_attestazione_integration.md](./frontend_attestazione_integration.md)
 - [./document_generation.md](./document_generation.md)
 - [./failure_registry_contract.md](./failure_registry_contract.md)
 - [./refactor_protected_invariants.md](./refactor_protected_invariants.md)
