@@ -31,3 +31,8 @@ repomix.config.json
 repomix-output.md
 
 /logs/
+
+# Ignore frontend dependencies and build artifacts
+/frontend/node_modules/
+/frontend/dist/
+/frontend/coverage/

@@ -159,6 +159,7 @@ scrapy crawl uppi
 * [docs/web_attestazioni_search_prepare.md](docs/web_attestazioni_search_prepare.md)
 * [docs/web_attestazioni_generation.md](docs/web_attestazioni_generation.md)
 * [docs/web_clients_bulk_import.md](docs/web_clients_bulk_import.md)
+* [docs/frontend_skeleton.md](docs/frontend_skeleton.md)
 * [docs/local_development_and_testing.md](docs/local_development_and_testing.md)
 
 ### Тести, перевірки, запуск перед релізом
